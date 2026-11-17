@@ -1,0 +1,1947 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Hex Merge Puzzle</title>
+<!--
+  Hex Merge Puzzle — original HTML5 puzzle game. Plain no-SDK build for Newgrounds and GameJolt direct upload.
+  100% code-drawn (Canvas 2D + CSS), no images, no audio files, no other
+  external resources. No SDK, no ads, no external URLs at all — the file is fully self-contained.
+
+  PLAIN (NO-SDK) BUILD — for Newgrounds and GameJolt direct upload.
+  There is no platform SDK in this file: no ads, no analytics, no
+  cloud save, no external URLs. The CG adapter below keeps the exact
+  interface the game code calls, but every method is a no-op except
+  saves (localStorage only, same save key) and requestAd, which
+  always returns false and fires callbacks.adError, so the game's
+  existing hide-rewarded-buttons path runs and the rewarded buttons
+  are hidden at boot. No midgame ads anywhere. No placeholders:
+  no portal-assigned ID exists for a no-SDK build.
+    - Progress Save: Yes (localStorage only)
+    - Save key: "hexmerge_save_v1" (unchanged)
+
+  Depth / progression (v3 + v4 — added after the quality rejection):
+    - Stone tiles (from level 3): grey blockers that sit fixed in a
+      column and must be smashed by merging next to them (+50 each).
+    - Wild tiles (from level 5): rainbow tiles that join any group
+      and complete a merge (2 same tiles + 1 wild = merge).
+    - Hexley's orders: a persistent order panel (left side, always
+      visible) asks for tiles of one value; filling an order pays
+      +150 and a fresh order appears. Merging always has a purpose.
+    - Bomb rescue tool: clears the 3 lowest tiles; 1 per run, +1 on
+      level-up (max 3). Undo, Hint, Bomb and Restart are all visible
+      on the HUD during play; the move counter is in the HUD.
+    - Daily bonus: claim +3 Undo once a day; consecutive days build
+      a streak shown on the menu.
+    - Unlockable board themes: Midnight (start), Sunset (level 3),
+      Ocean (level 5), Forest (level 8) — picked on the menu.
+    - Coins + ranks (v4): every merge earns coins (1 per 10 merge
+      points, +15 per order, +50 for a golden tile); a rank title
+      rises with the level (Rookie → Apprentice → Skilled → Expert
+      → Master → Grandmaster → Legend), shown in the HUD and menu.
+    - Golden tile (v4): a rare surprise tile (from level 2, ~1 in
+      15) that pays +100 score and +50 coins when it merges.
+    - Level-complete (v4): a celebratory results screen (stars,
+      score bonus, coins earned, rewards, next goal) — tap Continue
+      or it auto-continues in 3s.
+    - Mascot: Hexley, the little hexagon buddy, on the menu and the
+      game-over card — and on the covers.
+    - Onboarding: a looping demo hand on the menu, a bobbing
+      pointing hand over the glowing column for the first moves,
+      Hexley teaching one rule at a time in a speech bubble, and a
+      short task checklist (Drop a tile / Merge 3 same numbers /
+      Reach the goal tile) ticking off as the player learns; one-line
+      prompts; Space / Enter starts a game from the title or
+      game-over screen with one tap.
+
+  Submission notes:
+    - Progress Save: Yes (localStorage only)
+    - Orientation: landscape 16:9 primary, portrait letterboxed
+    - Category: Puzzle
+    - Language: English only. PEGI 12. No fullscreen button, no
+      preloader blocking play, no cross-promotion, no external links,
+      no content aimed at kids.
+    - Size target: well under 1MB single file.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: #0b0b24;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    color: #ffffff;
+    user-select: none;
+    -webkit-user-select: none;
+    overflow: hidden;
+  }
+  #wrap {
+    width: 100vw; height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #game {
+    position: relative;
+    width: min(100vw, 177.78vh);
+    height: min(100vh, 56.25vw);
+    aspect-ratio: 16 / 10;
+    max-width: 960px; max-height: 600px;
+    background: #141432;
+    overflow: hidden;
+    border-radius: 6px;
+  }
+  #boardCanvas {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    display: block;
+    touch-action: none;
+    cursor: pointer;
+  }
+  /* ---------- HUD ---------- */
+  #hud {
+    position: absolute; top: 0; left: 0; right: 0;
+    height: 62px;
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px;
+    background: rgba(11, 11, 36, 0.72);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    z-index: 5;
+  }
+  .stat { min-width: 74px; }
+  .stat .lbl { font-size: 12px; letter-spacing: 1px; color: #9aa0c3; text-transform: uppercase; }
+  .stat .val { font-size: 20px; font-weight: 800; line-height: 1.1; }
+  #goalWrap { flex: 1; min-width: 120px; }
+  #goalText { font-size: 14px; color: #cdd2ee; margin-bottom: 4px; }
+  #goalText b { color: #ffd166; }
+  #goalBar { height: 10px; background: #23234d; border-radius: 6px; overflow: hidden; }
+  #goalFill { height: 100%; width: 0%; background: linear-gradient(90deg, #22d3ee, #a855f7, #f472b6); border-radius: 6px; transition: width 0.3s; }
+  /* ---------- Side panels ---------- */
+  .panel {
+    position: absolute; top: 84px; width: 196px; z-index: 5;
+    display: flex; flex-direction: column; gap: 10px; align-items: center;
+  }
+  #leftPanel { left: 14px; }
+  #rightPanel { right: 14px; }
+  .panel h3 { font-size: 12px; letter-spacing: 1px; color: #9aa0c3; text-transform: uppercase; }
+  .tilePreview {
+    width: 76px; height: 84px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 34px; font-weight: 900; color: #fff;
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    text-shadow: 0 2px 4px rgba(0,0,0,0.45);
+  }
+  .tilePreview.next { width: 54px; height: 60px; font-size: 24px; opacity: 0.9; }
+  .mini { font-size: 13px; color: #9aa0c3; text-align: center; line-height: 1.4; }
+  button {
+    font-family: inherit; cursor: pointer; border: none;
+    border-radius: 10px; font-weight: 800; color: #141432;
+  }
+  .btn {
+    width: 100%; padding: 11px 8px; font-size: 15px;
+    background: #ffd166; box-shadow: 0 3px 0 #b98a1d;
+  }
+  .btn:active { transform: translateY(2px); box-shadow: none; }
+  .btn.ghost { background: #2a2a55; color: #e6e8ff; box-shadow: 0 3px 0 #17173a; }
+  .btn.blue { background: #22d3ee; box-shadow: 0 3px 0 #0e7490; }
+  .btn:disabled { opacity: 0.45; cursor: default; }
+  .btn.small { padding: 8px 6px; font-size: 13px; }
+  #undoCount { font-size: 13px; color: #ffd166; font-weight: 700; }
+  /* ---------- Overlays ---------- */
+  .overlay {
+    position: absolute; inset: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(10, 10, 32, 0.78);
+    backdrop-filter: blur(2px);
+  }
+  .overlay.hidden { display: none; }
+  .card {
+    width: min(560px, 92%);
+    max-height: 92%;
+    overflow-y: auto;
+    background: #1d1d45;
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 16px;
+    padding: 26px 28px;
+    text-align: center;
+    box-shadow: 0 18px 50px rgba(0,0,0,0.5);
+  }
+  .card h1 { font-size: 40px; line-height: 1.05; letter-spacing: 0.5px; }
+  .card h1 span { color: #ffd166; }
+  .card h2 { font-size: 30px; margin-bottom: 6px; }
+  .card p { font-size: 15px; line-height: 1.55; color: #cdd2ee; margin: 8px 0; }
+  .howto { text-align: left; margin: 14px auto; max-width: 430px; font-size: 15px; line-height: 1.7; color: #e6e8ff; }
+  .howto b { color: #ffd166; }
+  .card .btn { width: 100%; padding: 14px; font-size: 18px; margin-top: 10px; }
+  .card .btn.blue, .card .btn.ghost { margin-top: 10px; }
+  .bigScore { font-size: 44px; font-weight: 900; color: #ffd166; }
+  .scoreRow { display: flex; justify-content: center; gap: 26px; margin: 12px 0 4px; flex-wrap: wrap; }
+  .scoreRow .stat { min-width: 80px; }
+  .scoreRow .stat .val { font-size: 24px; }
+  #hintBar {
+    position: absolute; left: 0; right: 0; bottom: 8px; z-index: 5;
+    text-align: center; font-size: 14px; color: #9aa0c3; pointer-events: none;
+  }
+  /* ---------- v3: mascot, daily bonus, themes, ad note ---------- */
+  .mascot { display: block; margin: 0 auto 4px; filter: drop-shadow(0 4px 12px rgba(34, 211, 238, 0.45)); }
+  .mascot.small { margin-bottom: 2px; }
+  .mascotLine { font-size: 15px; color: #fde68a; margin: 2px 0 4px; }
+  .mascotLine b { color: #ffd166; }
+  #dailyBonus {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    background: rgba(255, 209, 102, 0.12); border: 1px solid rgba(255, 209, 102, 0.55);
+    border-radius: 12px; padding: 10px 12px; margin: 12px 0 2px;
+    font-size: 14px; font-weight: 700; color: #fde68a; text-align: left;
+  }
+  #dailyBonus.hidden { display: none; }
+  #dailyBonus .btn { width: auto; margin-top: 0; padding: 9px 14px; font-size: 14px; white-space: nowrap; }
+  .sectionLabel { font-size: 12px; letter-spacing: 1px; color: #9aa0c3; text-transform: uppercase; margin: 16px 0 8px; }
+  #themeRow { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+  .themeBtn {
+    background: #2a2a55; color: #e6e8ff; font-size: 13px; font-weight: 800;
+    border: 2px solid #555; border-radius: 18px; padding: 7px 14px; box-shadow: none;
+  }
+  .themeBtn.selected { background: #ffd166; color: #141432; }
+  .themeBtn:disabled { opacity: 0.45; cursor: default; }
+  .adNote { font-size: 14px; color: #fca5a5; margin: 8px 0 0; }
+  .adNote.hidden { display: none; }
+  /* ---------- v4: checklist, speech bubble, level results ---------- */
+  #checklist {
+    position: absolute; left: 14px; bottom: 40px; z-index: 6;
+    background: rgba(29, 29, 69, 0.92); border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 12px; padding: 10px 14px;
+    font-size: 13px; font-weight: 700; color: #cdd2ee; line-height: 1.9;
+  }
+  #checklist.hidden { display: none; }
+  .checkItem.done { color: #4ade80; text-decoration: line-through; }
+  #tutorialBar .tutMascot { flex: none; filter: drop-shadow(0 2px 6px rgba(34, 211, 238, 0.5)); }
+  #tutorialBar::after {
+    content: ""; position: absolute; left: 50%; bottom: -9px; margin-left: -9px;
+    border-left: 9px solid transparent; border-right: 9px solid transparent;
+    border-top: 9px solid rgba(29, 29, 69, 0.95);
+  }
+  #levelResultStars { font-size: 44px; color: #ffd166; letter-spacing: 6px; margin: 6px 0 2px; text-shadow: 0 3px 12px rgba(245, 158, 11, 0.5); }
+  #levelResultRewards { font-size: 15px; color: #fde68a; }
+  #levelResultNext { font-size: 15px; }
+  /* ---------- v3: order panel + demo hand ---------- */
+  #orderPanel {
+    background: rgba(255, 209, 102, 0.08); border: 1px solid rgba(255, 209, 102, 0.35);
+    border-radius: 12px; padding: 10px; width: 100%;
+  }
+  #orderPanel h3 { margin-bottom: 8px; }
+  .orderRow { display: flex; align-items: center; gap: 10px; }
+  .tilePreview.order { width: 44px; height: 50px; font-size: 20px; flex: none; }
+  .orderText { font-size: 13px; color: #e6e8ff; text-align: left; line-height: 1.45; }
+  .orderText b { color: #ffd166; font-size: 15px; }
+  .howStep { position: relative; }
+  .demoHand {
+    position: absolute; top: -16px; left: 50%; margin-left: -13px;
+    font-size: 26px; pointer-events: none;
+    animation: handBob 1.2s ease-in-out infinite;
+  }
+  @keyframes handBob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(9px); } }
+  /* ---------- v2: combo badge, tutorial bar, menu stats ---------- */
+  #comboBadge {
+    position: absolute; top: 74px; left: 50%; transform: translateX(-50%) scale(0.9);
+    z-index: 6; padding: 6px 16px; border-radius: 20px;
+    background: linear-gradient(90deg, #f59e0b, #ef4444);
+    color: #fff; font-size: 17px; font-weight: 900; letter-spacing: 1px;
+    box-shadow: 0 4px 18px rgba(239, 68, 68, 0.55);
+    opacity: 0; pointer-events: none; transition: opacity 0.2s, transform 0.2s;
+    white-space: nowrap;
+  }
+  #comboBadge.show { opacity: 1; transform: translateX(-50%) scale(1); }
+  #comboBadge .streak { color: #fde68a; }
+  #tutorialBar {
+    position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%);
+    z-index: 7; display: flex; align-items: center; gap: 12px;
+    background: rgba(29, 29, 69, 0.95); border: 1px solid rgba(255, 209, 102, 0.5);
+    border-radius: 24px; padding: 9px 10px 9px 18px;
+    font-size: 14px; font-weight: 700; color: #fde68a; white-space: nowrap;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  }
+  #tutorialBar.hidden { display: none; }
+  #tutorialBar button {
+    background: #2a2a55; color: #e6e8ff; font-size: 12px; font-weight: 800;
+    border-radius: 14px; padding: 6px 12px; box-shadow: none;
+  }
+  .menuStats { display: flex; justify-content: center; gap: 10px; margin: 14px 0 2px; flex-wrap: wrap; }
+  .chip {
+    background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px; padding: 8px 12px; min-width: 92px;
+  }
+  .chip .lbl { font-size: 12px; letter-spacing: 1px; color: #9aa0c3; text-transform: uppercase; }
+  .chip .val { font-size: 19px; font-weight: 800; color: #ffd166; }
+  .card h1 {
+    background: linear-gradient(180deg, #ffffff 30%, #ffd166 75%, #f59e0b);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 3px 10px rgba(245, 158, 11, 0.35));
+  }
+  .card h1 span { color: inherit; }
+  .howtoSteps { display: flex; justify-content: center; gap: 14px; margin: 16px 0 4px; flex-wrap: wrap; }
+  .howStep { width: 128px; font-size: 13px; line-height: 1.45; color: #e6e8ff; }
+  .howStep .miniHex {
+    width: 46px; height: 52px; margin: 0 auto 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 21px; font-weight: 900; color: #fff;
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    text-shadow: 0 2px 4px rgba(0,0,0,0.45);
+  }
+  #newBestBadge {
+    display: inline-block; margin: 6px 0 2px; padding: 5px 14px; border-radius: 16px;
+    background: linear-gradient(90deg, #f59e0b, #ef4444); color: #fff;
+    font-size: 15px; font-weight: 900; letter-spacing: 1px;
+    box-shadow: 0 4px 16px rgba(239, 68, 68, 0.5);
+  }
+  #newBestBadge.hidden { display: none; }
+  @media (max-width: 700px) {
+    .panel { width: 128px; }
+    .stat .val { font-size: 16px; }
+    .card h1 { font-size: 30px; }
+    .tilePreview { width: 60px; height: 66px; font-size: 26px; }
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="game">
+    <canvas id="boardCanvas" width="960" height="600"></canvas>
+
+    <div id="hud">
+      <div class="stat"><div class="lbl">Score</div><div class="val" id="hudScore">0</div></div>
+      <div class="stat"><div class="lbl">Best</div><div class="val" id="hudBest">0</div></div>
+      <div class="stat"><div class="lbl">Level</div><div class="val" id="hudLevel">1</div></div>
+      <div class="stat"><div class="lbl">Moves</div><div class="val" id="hudMoves">0</div></div>
+      <div class="stat"><div class="lbl">🪙 Coins</div><div class="val" id="hudCoins">0</div></div>
+      <div id="goalWrap">
+        <div id="goalText">Goal: reach tile <b id="goalTile">5</b> &nbsp;•&nbsp; Max tile: <b id="maxTile">0</b> &nbsp;•&nbsp; Rank: <b id="goalRank">Rookie</b></div>
+        <div id="goalBar"><div id="goalFill"></div></div>
+      </div>
+    </div>
+
+    <div class="panel" id="leftPanel">
+      <h3>Current</h3>
+      <div class="tilePreview" id="currentTile">1</div>
+      <h3>Next</h3>
+      <div class="tilePreview next" id="nextTile">2</div>
+      <div id="orderPanel">
+        <h3>🧾 Hexley's Order</h3>
+        <div class="orderRow">
+          <div class="tilePreview order" id="orderTile">3</div>
+          <div class="orderText"><b id="orderCount">×2</b><br><span id="orderProgress">0 / 2 done</span></div>
+        </div>
+      </div>
+      <div class="mini">Click a column, or use<br>← → then Space to drop</div>
+    </div>
+
+    <div class="panel" id="rightPanel">
+      <button class="btn blue small" id="btnUndo" type="button">↩ Undo (<span id="undoCount">3</span>)</button>
+      <button class="btn ghost small" id="btnHint" type="button">💡 Hint</button>
+      <button class="btn ghost small" id="btnBomb" type="button">💣 Bomb (<span id="bombCount">1</span>)</button>
+      <button class="btn ghost small" id="btnRestart" type="button">↻ Restart</button>
+      <button class="btn ghost small" id="btnPause" type="button">⏸ Pause</button>
+      <button class="btn ghost small" id="btnSound" type="button">🔊 Sound: On</button>
+    </div>
+
+    <div id="comboBadge"></div>
+    <div id="checklist" class="hidden">
+      <div class="checkItem" id="check0">○ Drop a tile</div>
+      <div class="checkItem" id="check1">○ Merge 3 same numbers</div>
+      <div class="checkItem" id="check2">○ Reach tile 5</div>
+    </div>
+    <div id="tutorialBar" class="hidden"><svg class="tutMascot" viewBox="0 0 100 100" width="34" height="34" aria-hidden="true"><polygon points="50,4 90,27 90,73 50,96 10,73 10,27" fill="#22d3ee" stroke="#ffffff" stroke-width="4"/><circle cx="36" cy="42" r="8" fill="#141432"/><circle cx="64" cy="42" r="8" fill="#141432"/><path d="M36 62 Q50 74 64 62" stroke="#141432" stroke-width="5" fill="none" stroke-linecap="round"/></svg><span id="tutorialText"></span><button id="btnSkipTutorial" type="button">Skip ✕</button></div>
+    <div id="hintBar">Match 3+ same numbers to merge them into a bigger tile.</div>
+
+    <!-- LEVEL COMPLETE -->
+    <div class="overlay hidden" id="levelOverlay">
+      <div class="card">
+        <h2 id="levelResultTitle">LEVEL 2 COMPLETE!</h2>
+        <div id="levelResultStars">★★★</div>
+        <div class="scoreRow">
+          <div class="stat"><div class="lbl">Score Bonus</div><div class="val" id="levelResultScore">+500</div></div>
+          <div class="stat"><div class="lbl">Coins Earned</div><div class="val" id="levelResultCoins">+0 coins</div></div>
+        </div>
+        <p id="levelResultRewards"></p>
+        <p id="levelResultNext"></p>
+        <button class="btn" id="btnContinueLevel" type="button">▶ Keep Playing</button>
+      </div>
+    </div>
+
+    <!-- MENU -->
+    <div class="overlay" id="menuOverlay">
+      <div class="card">
+        <svg class="mascot" viewBox="0 0 100 100" width="76" height="76" aria-hidden="true">
+          <polygon points="50,4 90,27 90,73 50,96 10,73 10,27" fill="#22d3ee" stroke="#ffffff" stroke-width="3"/>
+          <circle cx="36" cy="42" r="7" fill="#141432"/><circle cx="64" cy="42" r="7" fill="#141432"/>
+          <circle cx="38.5" cy="39.5" r="2.4" fill="#ffffff"/><circle cx="66.5" cy="39.5" r="2.4" fill="#ffffff"/>
+          <path d="M36 62 Q50 74 64 62" stroke="#141432" stroke-width="4" fill="none" stroke-linecap="round"/>
+        </svg>
+        <h1>HEX <span>MERGE</span><br>PUZZLE</h1>
+        <p class="mascotLine">Meet <b>Hexley</b>, your merge buddy!</p>
+        <p>Drop numbered hex tiles. Match 3 or more of the same number and they merge into a bigger tile.</p>
+        <div id="dailyBonus" class="hidden">
+          <span id="dailyBonusText"></span>
+          <button class="btn blue" id="btnClaimDaily" type="button">🎁 Claim +3 Undo</button>
+        </div>
+        <div class="howtoSteps">
+          <div class="howStep"><div class="demoHand">👇</div><div class="miniHex" style="background:#22d3ee;">1</div>Drop a tile into any column</div>
+          <div class="howStep"><div class="miniHex" style="background:#fbbf24; color:#141432;">3</div>Match 3+ same numbers to merge</div>
+          <div class="howStep"><div class="miniHex" style="background:#f97316;">5</div>Reach the target tile to level up</div>
+        </div>
+        <p class="mini">From level 3, grey <b>stone tiles</b> block columns — smash them by merging next to them. From level 5, rainbow <b>wild tiles</b> complete any merge. Fill <b>Hexley's orders</b> for +150 bonus. Earn <b>coins</b> on every merge and climb the ranks — catch a <b>golden tile</b> for +50 coins!</p>
+        <div class="menuStats">
+          <div class="chip"><div class="lbl">Best Score</div><div class="val" id="menuBestScore">0</div></div>
+          <div class="chip"><div class="lbl">Best Tile</div><div class="val" id="menuBestTile">0</div></div>
+          <div class="chip"><div class="lbl">Best Combo</div><div class="val" id="menuBestCombo">×0</div></div>
+          <div class="chip"><div class="lbl">Daily Streak</div><div class="val" id="menuStreak">🔥 0-day streak</div></div>
+          <div class="chip"><div class="lbl">🪙 Coins</div><div class="val" id="menuCoins">0</div></div>
+        </div>
+        <p id="menuRank" style="margin-top:10px;">Rank: Rookie — reach level 2 to become an Apprentice!</p>
+        <h3 class="sectionLabel">Board Theme</h3>
+        <div id="themeRow"></div>
+        <button class="btn" id="btnPlay" type="button">▶ Play</button>
+        <p id="menuBest" style="margin-top:12px;">Best score: 0</p>
+      </div>
+    </div>
+
+    <!-- PAUSE -->
+    <div class="overlay hidden" id="pauseOverlay">
+      <div class="card">
+        <h2>Paused</h2>
+        <p>Take a breath. Your board is saved right here.</p>
+        <div class="scoreRow">
+          <div class="stat"><div class="lbl">Score</div><div class="val" id="pauseScore">0</div></div>
+          <div class="stat"><div class="lbl">Level</div><div class="val" id="pauseLevel">1</div></div>
+          <div class="stat"><div class="lbl">Moves</div><div class="val" id="pauseMoves">0</div></div>
+          <div class="stat"><div class="lbl">Best Tile</div><div class="val" id="pauseMax">0</div></div>
+        </div>
+        <button class="btn" id="btnResume" type="button">▶ Resume</button>
+        <button class="btn blue" id="btnRestartPause" type="button">↻ Restart</button>
+        <button class="btn" id="btnUndoAdPause" type="button">📺 Watch Ad: +2 Undo</button>
+        <p class="adNote hidden">📺 No ads available right now — try again later.</p>
+        <button class="btn ghost" id="btnSoundPause" type="button">🔊 Sound: On</button>
+      </div>
+    </div>
+
+    <!-- GAME OVER -->
+    <div class="overlay hidden" id="overOverlay">
+      <div class="card">
+        <svg class="mascot small" viewBox="0 0 100 100" width="56" height="56" aria-hidden="true">
+          <polygon points="50,4 90,27 90,73 50,96 10,73 10,27" fill="#22d3ee" stroke="#ffffff" stroke-width="3"/>
+          <circle cx="36" cy="42" r="7" fill="#141432"/><circle cx="64" cy="42" r="7" fill="#141432"/>
+          <circle cx="38.5" cy="39.5" r="2.4" fill="#ffffff"/><circle cx="66.5" cy="39.5" r="2.4" fill="#ffffff"/>
+          <path d="M36 62 Q50 74 64 62" stroke="#141432" stroke-width="4" fill="none" stroke-linecap="round"/>
+        </svg>
+        <h2>Game Over</h2>
+        <p>The board is full. Great run!</p>
+        <div><span id="newBestBadge" class="hidden">★ NEW BEST! ★</span></div>
+        <div class="bigScore" id="finalScore">0</div>
+        <div class="scoreRow">
+          <div class="stat"><div class="lbl">Best</div><div class="val" id="finalBest">0</div></div>
+          <div class="stat"><div class="lbl">Max Tile</div><div class="val" id="finalMax">0</div></div>
+          <div class="stat"><div class="lbl">Level</div><div class="val" id="finalLevel">1</div></div>
+          <div class="stat"><div class="lbl">Best Combo</div><div class="val" id="finalCombo">×0</div></div>
+          <div class="stat"><div class="lbl">Best Streak</div><div class="val" id="finalStreak">0</div></div>
+        </div>
+        <button class="btn" id="btnPlayAgain" type="button">▶ Play Again (Free)</button>
+        <button class="btn" id="btnContinueAd" type="button">📺 Watch Ad: Clear 3 Tiles &amp; Continue</button>
+        <button class="btn" id="btnUndoAdOver" type="button">📺 Watch Ad: +2 Undo</button>
+        <p class="adNote hidden">📺 No ads available right now — try again later.</p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+   PURE GRID LOGIC (no DOM) — marked for unit testing
+   Grid: grid[col][row], col 0..6, row 0..5 (row 0 = top, row 5 = bottom)
+   Odd-q offset neighbours (odd columns shifted down half a row step):
+     even col: (0,-1) (0,+1) (+1,0) (+1,-1) (-1,0) (-1,-1)
+     odd  col: (0,-1) (0,+1) (+1,+1) (+1,0) (-1,+1) (-1,0)
+   ===================================================================== */
+// __PURE_LOGIC_START__
+var COLS = 7, ROWS = 6;
+// Special tile values: 0 = empty, positive = numbered tile,
+// STONE = fixed blocker (never merges, never falls), WILD = rainbow tile
+// that joins any group and completes a merge.
+var STONE = -1, WILD = -2;
+function emptyGrid() {
+  var g = [], c, r;
+  for (c = 0; c < COLS; c++) { g.push([]); for (r = 0; r < ROWS; r++) g[c].push(0); }
+  return g;
+}
+function inBounds(c, r) { return c >= 0 && c < COLS && r >= 0 && r < ROWS; }
+function neighbours(c, r) {
+  var even = (c % 2 === 0);
+  var off = even
+    ? [[0,-1],[0,1],[1,0],[1,-1],[-1,0],[-1,-1]]
+    : [[0,-1],[0,1],[1,1],[1,0],[-1,1],[-1,0]];
+  var out = [], i, nc, nr;
+  for (i = 0; i < off.length; i++) {
+    nc = c + off[i][0]; nr = r + off[i][1];
+    if (inBounds(nc, nr)) out.push([nc, nr]);
+  }
+  return out;
+}
+// Groups of 3+ connected same-number tiles. A wild tile joins a group and
+// bridges same-number tiles on either side of it (2 same tiles + 1 wild
+// = a merge). Stones never join. Each group is {value, cells} where
+// cells includes wild cells. A wild is consumed by the first numeric
+// group that reaches it (scan order: columns, then rows).
+function findGroups(grid) {
+  var visited = [], c, r, groups = [];
+  for (c = 0; c < COLS; c++) { visited.push([]); for (r = 0; r < ROWS; r++) visited[c].push(false); }
+  for (c = 0; c < COLS; c++) {
+    for (r = 0; r < ROWS; r++) {
+      if (grid[c][r] <= 0 || visited[c][r]) continue;
+      var val = grid[c][r], stack = [[c, r]], group = [];
+      visited[c][r] = true;
+      while (stack.length) {
+        var cell = stack.pop(), cc = cell[0], rr = cell[1];
+        group.push([cc, rr]);
+        var nb = neighbours(cc, rr), i;
+        for (i = 0; i < nb.length; i++) {
+          var nc = nb[i][0], nr = nb[i][1];
+          if (!visited[nc][nr] && (grid[nc][nr] === val || grid[nc][nr] === WILD)) {
+            visited[nc][nr] = true; stack.push([nc, nr]);
+          }
+        }
+      }
+      if (group.length >= 3) groups.push({ value: val, cells: group });
+    }
+  }
+  return groups;
+}
+// Gravity: numbered tiles fall to the bottom of their column segment.
+// Stones stay exactly where they are and split the column into segments.
+function applyGravity(grid) {
+  var c, r;
+  for (c = 0; c < COLS; c++) {
+    var out = [];
+    for (r = 0; r < ROWS; r++) out.push(0);
+    var segBottom = ROWS - 1, r2 = ROWS - 1;
+    while (r2 >= 0) {
+      if (grid[c][r2] === STONE) {
+        out[r2] = STONE; segBottom = r2 - 1; r2--;
+        continue;
+      }
+      var segTop = r2;
+      while (segTop >= 0 && grid[c][segTop] !== STONE) segTop--;
+      var vals = [], i;
+      for (i = r2; i > segTop; i--) if (grid[c][i]) vals.push(grid[c][i]);
+      for (var j = 0; j < vals.length; j++) out[segBottom - j] = vals[j];
+      segBottom = segTop - 1;
+      r2 = segTop;
+    }
+    for (r = 0; r < ROWS; r++) grid[c][r] = out[r];
+  }
+  return grid;
+}
+function lowestEmptyRow(grid, col) {
+  var r;
+  for (r = ROWS - 1; r >= 0; r--) if (!grid[col][r]) return r;
+  return -1;
+}
+function isBoardFull(grid) {
+  var c;
+  for (c = 0; c < COLS; c++) if (lowestEmptyRow(grid, c) !== -1) return false;
+  return true;
+}
+function maxTileOf(grid) {
+  var m = 0, c, r;
+  for (c = 0; c < COLS; c++) for (r = 0; r < ROWS; r++) if (grid[c][r] > m) m = grid[c][r];
+  return m;
+}
+// Score for one merge group: tile value x group size x 10 x combo multiplier.
+function scoreForMerge(value, size, combo) {
+  return value * size * 10 * combo;
+}
+// Bonus when a star tile takes part in a merge (star flag travels with merges).
+function starBonus(starInMerge, merged) {
+  return (starInMerge && merged) ? 100 : 0;
+}
+// Resolve all merges (with chains). Mutates grid. Returns details.
+// Stones adjacent to a merge target break: +50 points each.
+function resolveMerges(grid) {
+  var totalScore = 0, chains = 0, mergedAny = false, mergeEvents = [], guard = 0;
+  var stonesBroken = 0, stoneEvents = [];
+  while (guard++ < 20) {
+    var groups = findGroups(grid);
+    if (!groups.length) break;
+    chains++;
+    var combo = chains, gi, cell;
+    for (gi = 0; gi < groups.length; gi++) {
+      var g = groups[gi];
+      // target = lowest cell of the group (largest row, then largest col)
+      var target = g.cells[0], i;
+      for (i = 1; i < g.cells.length; i++) {
+        var cc = g.cells[i];
+        if (cc[1] > target[1] || (cc[1] === target[1] && cc[0] > target[0])) target = cc;
+      }
+      for (i = 0; i < g.cells.length; i++) grid[g.cells[i][0]][g.cells[i][1]] = 0;
+      grid[target[0]][target[1]] = g.value + 1;
+      totalScore += scoreForMerge(g.value, g.cells.length, combo);
+      mergeEvents.push({ value: g.value + 1, col: target[0], row: target[1], size: g.cells.length, combo: combo, cells: g.cells });
+      mergedAny = true;
+      // Stones next to the new tile smash apart (+50 each).
+      var nb = neighbours(target[0], target[1]), n;
+      for (n = 0; n < nb.length; n++) {
+        var nc = nb[n][0], nr = nb[n][1];
+        if (grid[nc][nr] === STONE) {
+          grid[nc][nr] = 0; stonesBroken++; totalScore += 50;
+          stoneEvents.push({ col: nc, row: nr });
+        }
+      }
+    }
+    applyGravity(grid);
+  }
+  return { score: totalScore, chains: chains, merged: mergedAny, events: mergeEvents, maxTile: maxTileOf(grid), stonesBroken: stonesBroken, stoneEvents: stoneEvents };
+}
+// How many stone tiles appear when a level starts (none before level 3).
+function stoneCountForLevel(level) {
+  if (level < 3) return 0;
+  if (level < 5) return 1;
+  if (level < 7) return 2;
+  return 3;
+}
+// Unlockable board themes (unlocked by reaching the level).
+var THEMES = [
+  { id: "midnight", name: "Midnight", unlock: 1, bg: ["#181838", "#141432", "#1e1040"], accent: "#ffd166" },
+  { id: "sunset", name: "Sunset", unlock: 3, bg: ["#2a1530", "#241028", "#3a0f2e"], accent: "#fb923c" },
+  { id: "ocean", name: "Ocean", unlock: 5, bg: ["#0a2530", "#082030", "#0b2f3a"], accent: "#22d3ee" },
+  { id: "forest", name: "Forest", unlock: 8, bg: ["#0f2418", "#0c2013", "#14301f"], accent: "#4ade80" }
+];
+function themeById(id) {
+  for (var i = 0; i < THEMES.length; i++) if (THEMES[i].id === id) return THEMES[i];
+  return THEMES[0];
+}
+function unlockedThemeIds(maxLevel) {
+  var out = [], i;
+  for (i = 0; i < THEMES.length; i++) if (THEMES[i].unlock <= maxLevel) out.push(THEMES[i].id);
+  return out;
+}
+// Hexley's order: each level (and each completed order) asks for a number
+// of tiles of one value. Filling an order pays a bonus — merging always
+// has a visible purpose beyond its own sake.
+function orderForLevel(level) {
+  return { value: Math.min(3 + Math.floor((level - 1) / 2), 8), count: 2, done: 0 };
+}
+function applyOrderProgress(order, mergedValue) {
+  var done = order.done + (mergedValue === order.value ? 1 : 0);
+  if (done > order.count) done = order.count;
+  return { value: order.value, count: order.count, done: done, complete: done >= order.count };
+}
+function nextOrder(order) {
+  return { value: Math.min(order.value + 1, 9), count: 2, done: 0 };
+}
+// Rank titles that rise with the level — the persistent progression HUD.
+function rankForLevel(level) {
+  if (level >= 20) return "Legend";
+  if (level >= 12) return "Grandmaster";
+  if (level >= 8) return "Master";
+  if (level >= 5) return "Expert";
+  if (level >= 3) return "Skilled";
+  if (level >= 2) return "Apprentice";
+  return "Rookie";
+}
+// Coins earned from merge points: 1 coin per 10 merge points.
+function coinsForMergeScore(score) {
+  return Math.floor(score / 10);
+}
+// Level-complete stars: fast levels earn 3 stars.
+function starsForLevel(movesUsed) {
+  if (movesUsed <= 12) return 3;
+  if (movesUsed <= 25) return 2;
+  return 1;
+}
+// Daily bonus: claimable when the saved last-claim date is not today.
+// Streak continues only if the last claim was yesterday, else it restarts.
+function isDailyAvailable(lastDaily, today) {
+  return lastDaily !== today;
+}
+function dailyStreakOnClaim(lastDaily, today, yesterday, streak) {
+  if (lastDaily === today) return streak;
+  return lastDaily === yesterday ? streak + 1 : 1;
+}
+function cloneGrid(grid) {
+  return grid.map(function (col) { return col.slice(); });
+}
+// __PURE_LOGIC_END__
+
+/* =====================================================================
+   PLAIN (NO-SDK) ADAPTER — Newgrounds / GameJolt direct upload.
+   There is no platform SDK in this build: no ads, no analytics, no
+   cloud save. The CG object keeps the exact interface the game code
+   calls, so gameplay is unchanged; every method is a no-op except
+   saves (localStorage only) and requestAd, which always fails closed
+   (returns false and fires callbacks.adError, so the game's existing
+   hide-rewarded-buttons path runs).
+   No placeholders: no portal-assigned ID exists for a no-SDK build.
+   ===================================================================== */
+var CG = {
+  available: false, sdk: null, loadingStarted: false, adInProgress: false,
+  sdkMuted: false, saveLoaded: false
+};
+function cgSdk() { return null; }
+CG.refreshSdkMute = function () { /* no SDK mute source; in-game toggle only */ };
+CG.init = async function () { return false; };
+CG.loadingStop = function () {};
+CG.gameplayStart = function () {};
+CG.gameplayStop = function () {};
+CG.happytime = function () {};
+CG.reportProgress = function (/* pct */) {};
+CG.setContext = function (/* level, score */) {};
+CG.requestAd = function (type, callbacks) {
+  // No ads in a plain build: always fail closed and tell the caller.
+  try { if (callbacks && typeof callbacks.adError === "function") callbacks.adError(new Error("no ads in plain build")); } catch (e) {}
+  return false;
+};
+
+/* ---------- Save: localStorage only (same key as the original) ---------- */
+var SAVE_KEY = "hexmerge_save_v1";
+var SAVE = { best: 0, level: 1, gamesPlayed: 0, maxTile: 0, bestCombo: 0, bestStreak: 0, theme: "midnight", dailyStreak: 0, lastDaily: "", bonusUndos: 0, coins: 0 };
+async function loadSave() {
+  var raw = null;
+  try { raw = window.localStorage.getItem(SAVE_KEY); } catch (e) { raw = null; }
+  if (raw) {
+    try {
+      var p = JSON.parse(raw);
+      if (p && typeof p === "object") {
+        SAVE.best = p.best | 0; SAVE.level = p.level | 0 || 1;
+        SAVE.gamesPlayed = p.gamesPlayed | 0; SAVE.maxTile = p.maxTile | 0;
+        SAVE.bestCombo = p.bestCombo | 0; SAVE.bestStreak = p.bestStreak | 0;
+        if (typeof p.theme === "string" && themeById(p.theme)) SAVE.theme = p.theme;
+        SAVE.dailyStreak = p.dailyStreak | 0; SAVE.lastDaily = (typeof p.lastDaily === "string") ? p.lastDaily : "";
+        SAVE.bonusUndos = p.bonusUndos | 0; SAVE.coins = p.coins | 0;
+      }
+    } catch (e) {}
+  }
+  CG.saveLoaded = true;
+}
+async function persistSave() {
+  var raw = JSON.stringify(SAVE);
+  try { window.localStorage.setItem(SAVE_KEY, raw); } catch (e) {}
+}
+
+/* =====================================================================
+   AUDIO — WebAudio synthesised only, no audio files.
+   ===================================================================== */
+var AudioSys = {
+  ctx: null, userMuted: false, adMuted: false,
+  ensure: function () {
+    if (!this.ctx) {
+      try {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (AC) this.ctx = new AC();
+      } catch (e) { this.ctx = null; }
+    }
+    if (this.ctx && this.ctx.state === "suspended") { this.ctx.resume().catch(function () {}); }
+    return this.ctx;
+  },
+  muted: function () { return this.userMuted || this.adMuted || CG.sdkMuted; },
+  tone: function (freq, dur, type, vol, delay) {
+    if (this.muted()) return;
+    var ctx = this.ensure(); if (!ctx) return;
+    try {
+      var t0 = ctx.currentTime + (delay || 0);
+      var o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = type || "sine"; o.frequency.setValueAtTime(freq, t0);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(vol || 0.12, t0 + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(t0); o.stop(t0 + dur + 0.05);
+    } catch (e) {}
+  },
+  place: function () { this.tone(420, 0.09, "triangle", 0.10); },
+  merge: function (combo, value) {
+    var base = 440 + Math.min(combo, 5) * 60 + value * 12;
+    this.tone(base, 0.12, "sine", 0.14);
+    this.tone(base * 1.5, 0.16, "sine", 0.12, 0.06);
+  },
+  levelUp: function () { var n = [523, 659, 784, 1047]; for (var i = 0; i < n.length; i++) this.tone(n[i], 0.18, "triangle", 0.13, i * 0.09); },
+  gameOver: function () { this.tone(330, 0.25, "sawtooth", 0.07); this.tone(220, 0.4, "sawtooth", 0.07, 0.18); },
+  click: function () { this.tone(600, 0.05, "square", 0.05); }
+};
+
+/* ---------- Original background music (synthesised, copyright-free) ----------
+   A soft, slow pentatonic loop: sparse melody notes over gentle pad chords.
+   No audio files, no samples — every note is generated in code. Quiet
+   (music gain 0.05), and it always obeys the in-game mute + SDK mute. */
+var Music = {
+  gain: null, timer: null, step: 0, nextTime: 0,
+  // C major pentatonic melody (0 = rest). One step = 0.32s.
+  MELODY: [523, 0, 587, 659, 0, 784, 0, 659, 587, 0, 523, 0, 440, 0, 523, 0,
+           587, 0, 659, 784, 0, 880, 784, 0, 659, 587, 523, 0, 440, 0, 392, 0],
+  // Pad chords, one per 8 steps: C, Am, F, G (root + third + fifth).
+  PADS: [[262, 330, 392], [220, 262, 330], [175, 220, 262], [196, 247, 294]],
+  ensure: function () {
+    var ctx = AudioSys.ensure(); if (!ctx) return null;
+    if (!this.gain) {
+      try {
+        this.gain = ctx.createGain();
+        this.gain.gain.value = AudioSys.muted() ? 0 : 0.05;
+        this.gain.connect(ctx.destination);
+      } catch (e) { this.gain = null; }
+    }
+    return this.gain ? ctx : null;
+  },
+  applyMute: function () {
+    if (this.gain) { try { this.gain.gain.value = AudioSys.muted() ? 0 : 0.05; } catch (e) {} }
+  },
+  note: function (freq, t0, dur, type, vol) {
+    var ctx = AudioSys.ctx; if (!ctx || !this.gain) return;
+    try {
+      var o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = type; o.frequency.setValueAtTime(freq, t0);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(vol, t0 + 0.05);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g); g.connect(this.gain);
+      o.start(t0); o.stop(t0 + dur + 0.05);
+    } catch (e) {}
+  },
+  tick: function () {
+    var ctx = AudioSys.ctx; if (!ctx || !this.gain) return;
+    while (this.nextTime < ctx.currentTime + 0.6) {
+      var s = this.step % 32, t0 = this.nextTime;
+      var m = this.MELODY[s];
+      if (m) this.note(m, t0, 0.55, "triangle", 0.16);
+      if (s % 8 === 0) {
+        var pad = this.PADS[(s / 8) | 0], i;
+        for (i = 0; i < pad.length; i++) this.note(pad[i], t0, 2.4, "sine", 0.05);
+      }
+      this.step++; this.nextTime += 0.32;
+    }
+  },
+  start: function () {
+    if (this.timer) return;
+    if (!this.ensure()) return;
+    this.step = 0; this.nextTime = AudioSys.ctx.currentTime + 0.1;
+    var self = this;
+    this.timer = setInterval(function () { self.tick(); }, 200);
+  },
+  stop: function () {
+    if (this.timer) { clearInterval(this.timer); this.timer = null; }
+  }
+};
+
+/* =====================================================================
+   GAME STATE + RENDERING
+   ===================================================================== */
+var TILE_COLORS = {
+  1: "#22d3ee", 2: "#34d399", 3: "#fbbf24", 4: "#f97316", 5: "#ef4444",
+  6: "#a855f7", 7: "#ec4899", 8: "#6366f1", 9: "#14b8a6", 10: "#eab308",
+  11: "#f43f5e", 12: "#f8fafc"
+};
+function tileColor(v) { return TILE_COLORS[v] || "#f8fafc"; }
+function tileTextColor(v) { return (v === 3 || v === 10 || v === 12) ? "#141432" : "#ffffff"; }
+
+var canvas = document.getElementById("boardCanvas");
+var ctx = canvas.getContext("2d");
+var DPR = Math.min(window.devicePixelRatio || 1, 2);
+canvas.width = 960 * DPR; canvas.height = 600 * DPR;
+ctx.scale(DPR, DPR);
+
+var HEX_R = 32;
+var COL_STEP = 58, ROW_STEP = 66, ODD_OFF = 33;
+var BOARD_W = (COLS - 1) * COL_STEP + Math.sqrt(3) * HEX_R;
+var BOARD_H = (ROWS - 1) * ROW_STEP + 2 * HEX_R + ODD_OFF;
+var BOARD_X = (960 - BOARD_W) / 2;
+var BOARD_Y = 92;
+function cellCenter(c, r) {
+  return {
+    x: BOARD_X + Math.sqrt(3) * HEX_R / 2 + c * COL_STEP,
+    y: BOARD_Y + HEX_R + r * ROW_STEP + (c % 2 === 1 ? ODD_OFF : 0)
+  };
+}
+function columnFromX(x) {
+  var c = Math.round((x - BOARD_X - Math.sqrt(3) * HEX_R / 2) / COL_STEP);
+  return Math.max(0, Math.min(COLS - 1, c));
+}
+
+var G = {
+  state: "menu", // menu | playing | paused | over | resolving
+  grid: emptyGrid(),
+  score: 0, best: 0, level: 1, moves: 0, maxTile: 0,
+  current: 1, next: 2, currentStar: false, nextStar: false,
+  currentWild: false, nextWild: false,
+  currentGolden: false, nextGolden: false, // surprise golden bonus tile
+  goldenCells: {},
+  starCells: {},
+  selectedCol: 3,
+  undoCharges: 3, undoStack: [],
+  hintUntil: 0, hintCooldownUntil: 0, hintCol: -1,
+  falling: null, // {col,row,value,y,targetY}
+  particles: [], floats: [], flashes: [], // flashes = landing rings
+  lastCombo: 0, lastComboAt: 0, streak: 0, bestStreak: 0,
+  shake: 0, tileBirth: {},
+  tutorial: { active: false, step: 0 },
+  theme: null, // set by applyTheme() on boot
+  order: { value: 3, count: 2, done: 0 }, // Hexley's current order
+  bombs: 1, // rescue tool: clears the 3 lowest tiles (+1 per level, max 3)
+  hasMerged: false, // checklist: at least one merge this run
+  levelCoins: 0, // coins earned in the current level (results screen)
+  movesAtLevelStart: 0, // moves when the current level started (stars)
+  target: function () { return 4 + this.level; }
+};
+function rollStar() { return Math.random() < 0.12; } // ~1 in 8 tiles is a star tile
+function rollWild() { return G.level >= 5 && Math.random() < 0.08; } // ~1 in 12 tiles is wild, from level 5
+// Surprise golden tile: rare (1 in 15), from level 2, only one on the board.
+function rollGolden() {
+  if (G.level < 2 || Math.random() >= 0.07) return false;
+  for (var k in G.goldenCells) if (G.goldenCells.hasOwnProperty(k)) return false;
+  return true;
+}
+function starKey(c, r) { return c + "," + r; }
+function undoTotal() { return G.undoCharges + (SAVE.bonusUndos | 0); }
+function randomTileValue() {
+  var r = Math.random();
+  if (r < 0.45) return 1;
+  if (r < 0.80) return 2;
+  return 3;
+}
+function newRun() {
+  G.grid = emptyGrid();
+  G.score = 0; G.level = 1; G.moves = 0; G.maxTile = 0;
+  G.current = randomTileValue(); G.next = randomTileValue();
+  G.currentStar = false; G.nextStar = rollStar();
+  G.currentWild = false; G.nextWild = rollWild();
+  G.currentGolden = false; G.nextGolden = rollGolden();
+  G.starCells = {}; G.goldenCells = {}; G.tileBirth = {};
+  G.selectedCol = 3; G.undoCharges = 3; G.undoStack = [];
+  G.falling = null; G.particles = []; G.floats = []; G.flashes = [];
+  G.hintCol = -1;
+  G.lastCombo = 0; G.streak = 0; G.bestStreak = 0; G.shake = 0;
+  G.tutorial.active = false; G.tutorial.step = 0;
+  G.order = orderForLevel(1); G.bombs = 1;
+  G.hasMerged = false; G.levelCoins = 0; G.movesAtLevelStart = 0;
+  SAVE.gamesPlayed++;
+  updateHUD(); updatePreviews(); hideTutorialBar();
+}
+function snapshot() {
+  // NOTE: undoCharges are deliberately NOT snapshotted. Charges are a
+  // spendable resource, not board state: restoring an old snapshot must
+  // never refund charges, or consecutive undos would be free.
+  return { grid: cloneGrid(G.grid), score: G.score, level: G.level, moves: G.moves, maxTile: G.maxTile, current: G.current, next: G.next, currentStar: G.currentStar, nextStar: G.nextStar, currentWild: G.currentWild, nextWild: G.nextWild, currentGolden: G.currentGolden, nextGolden: G.nextGolden, starCells: JSON.parse(JSON.stringify(G.starCells)), goldenCells: JSON.parse(JSON.stringify(G.goldenCells)), streak: G.streak, hasMerged: G.hasMerged };
+}
+function restoreSnapshot(s) {
+  G.grid = cloneGrid(s.grid); G.score = s.score; G.level = s.level;
+  G.moves = s.moves; G.maxTile = s.maxTile; G.current = s.current; G.next = s.next;
+  G.currentStar = !!s.currentStar; G.nextStar = !!s.nextStar;
+  G.currentWild = !!s.currentWild; G.nextWild = !!s.nextWild;
+  G.currentGolden = !!s.currentGolden; G.nextGolden = !!s.nextGolden;
+  G.starCells = s.starCells || {}; G.goldenCells = s.goldenCells || {};
+  G.streak = s.streak || 0; G.hasMerged = !!s.hasMerged; G.tileBirth = {};
+  G.falling = null;
+  updateHUD(); updatePreviews();
+}
+function doUndo() {
+  if (G.state !== "playing" || undoTotal() <= 0 || !G.undoStack.length) return;
+  var s = G.undoStack.pop();
+  restoreSnapshot(s);
+  // Spend exactly one charge per undo. Run charges first; the daily-bonus
+  // pool is the backup when run charges are spent.
+  if (G.undoCharges > 0) G.undoCharges = Math.max(0, G.undoCharges - 1);
+  else { SAVE.bonusUndos = Math.max(0, (SAVE.bonusUndos | 0) - 1); persistSave(); }
+  AudioSys.click();
+  addFloat(BOARD_X + BOARD_W / 2, BOARD_Y + 40, "Undo!", "#ffd166");
+  updateHUD();
+}
+function bestHintColumn() {
+  // Prefer a column whose drop creates a merge; else the emptiest column.
+  var c, best = -1, bestScore = -1;
+  for (c = 0; c < COLS; c++) {
+    var row = lowestEmptyRow(G.grid, c);
+    if (row === -1) continue;
+    var test = cloneGrid(G.grid);
+    test[c][row] = G.current;
+    var groups = findGroups(test), gain = 0, i;
+    for (i = 0; i < groups.length; i++) {
+      var has = false, j;
+      for (j = 0; j < groups[i].cells.length; j++) if (groups[i].cells[j][0] === c && groups[i].cells[j][1] === row) has = true;
+      if (has) gain += groups[i].cells.length * 10;
+    }
+    var empty = 0, r;
+    for (r = 0; r < ROWS; r++) if (!G.grid[c][r]) empty++;
+    var score = gain * 100 + empty;
+    if (score > bestScore) { bestScore = score; best = c; }
+  }
+  return best;
+}
+function useHint() {
+  if (G.state !== "playing") return;
+  var now = Date.now();
+  if (now < G.hintCooldownUntil) return;
+  var col = bestHintColumn();
+  if (col === -1) return;
+  G.hintCol = col; G.selectedCol = col;
+  G.hintUntil = now + 2000; G.hintCooldownUntil = now + 5000;
+  AudioSys.click();
+  updateHintButton();
+}
+function updateHintButton() {
+  var b = document.getElementById("btnHint");
+  b.disabled = Date.now() < G.hintCooldownUntil;
+  b.textContent = b.disabled ? "💡 Hint…" : "💡 Hint";
+}
+function addParticles(x, y, color, n) {
+  for (var i = 0; i < (n || 12); i++) {
+    var a = Math.random() * Math.PI * 2, sp = 40 + Math.random() * 120;
+    G.particles.push({ x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40, life: 0.6 + Math.random() * 0.4, max: 1, color: color, r: 3 + Math.random() * 4 });
+  }
+}
+function addFloat(x, y, text, color) {
+  G.floats.push({ x: x, y: y, text: text, color: color || "#ffd166", life: 1.1 });
+}
+function addFlash(x, y) {
+  // Instant landing feedback: an expanding gold ring where the tile lands.
+  G.flashes.push({ x: x, y: y, life: 0.35, max: 0.35 });
+}
+/* ---------- Onboarding checklist (ticks off as the player learns) ---------- */
+function updateChecklist() {
+  var box = document.getElementById("checklist");
+  if (!box) return;
+  var done0 = G.moves >= 1, done1 = G.hasMerged, done2 = G.level >= 2;
+  var items = [
+    { el: "check0", done: done0, label: "Drop a tile" },
+    { el: "check1", done: done1, label: "Merge 3 same numbers" },
+    { el: "check2", done: done2, label: "Reach tile " + G.target() }
+  ];
+  for (var i = 0; i < items.length; i++) {
+    var el = document.getElementById(items[i].el);
+    if (!el) continue;
+    el.classList.toggle("done", items[i].done);
+    el.textContent = (items[i].done ? "✓ " : "○ ") + items[i].label;
+  }
+  box.classList.toggle("hidden", !G.tutorial.active);
+}
+function addConfetti() {
+  // Celebration burst across the board on level-up: many colourful pieces.
+  var colors = ["#22d3ee", "#34d399", "#fbbf24", "#f97316", "#ef4444", "#a855f7", "#ec4899", "#ffd166"];
+  for (var i = 0; i < 70; i++) {
+    var x = BOARD_X + Math.random() * BOARD_W, y = BOARD_Y + Math.random() * 60;
+    G.particles.push({
+      x: x, y: y, vx: (Math.random() - 0.5) * 260, vy: -40 - Math.random() * 160,
+      life: 1.2 + Math.random() * 0.8, max: 2, color: colors[i % colors.length],
+      r: 3 + Math.random() * 4, confetti: true
+    });
+  }
+}
+/* ---------- Level-complete results screen ---------- */
+var levelResultsResolve = null, levelResultsTimer = null;
+function showLevelResults(rewardsText) {
+  var stars = starsForLevel(G.moves - G.movesAtLevelStart);
+  document.getElementById("levelResultTitle").textContent = "LEVEL " + G.level + " COMPLETE!";
+  document.getElementById("levelResultStars").textContent = "★".repeat(stars) + "☆".repeat(3 - stars);
+  document.getElementById("levelResultScore").textContent = "+" + (250 * G.level);
+  document.getElementById("levelResultCoins").textContent = "+" + G.levelCoins + " coins";
+  document.getElementById("levelResultRewards").textContent = rewardsText;
+  document.getElementById("levelResultNext").textContent =
+    "Next goal: reach tile " + G.target() + "  •  Rank: " + rankForLevel(G.level);
+  document.getElementById("levelOverlay").classList.remove("hidden");
+  G.state = "levelup";
+  CG.gameplayStop();
+  updateHUD();
+  return new Promise(function (resolve) {
+    levelResultsResolve = resolve;
+    levelResultsTimer = setTimeout(function () { continueLevel(); }, 3000);
+  });
+}
+function continueLevel() {
+  if (G.state !== "levelup") return;
+  if (levelResultsTimer) { clearTimeout(levelResultsTimer); levelResultsTimer = null; }
+  document.getElementById("levelOverlay").classList.add("hidden");
+  G.state = "playing";
+  CG.gameplayStart();
+  if (levelResultsResolve) { var r = levelResultsResolve; levelResultsResolve = null; r(); }
+}
+function updateComboBadge() {
+  var b = document.getElementById("comboBadge");
+  if (G.lastCombo >= 2 && Date.now() - G.lastComboAt < 2200) {
+    var html = "🔥 COMBO ×" + G.lastCombo;
+    if (G.streak >= 2) html += ' &nbsp;<span class="streak">STREAK ×' + G.streak + "</span>";
+    b.innerHTML = html; b.classList.add("show");
+  } else {
+    b.classList.remove("show");
+  }
+}
+/* ---------- In-gameplay onboarding (first 2 games only, skippable) ---------- */
+function startTutorial() {
+  if (SAVE.gamesPlayed > 2) return;
+  G.tutorial.active = true; G.tutorial.step = 0;
+  var col = bestHintColumn();
+  if (col !== -1) { G.hintCol = col; G.selectedCol = col; G.hintUntil = Date.now() + 60000; }
+  showTutorialBar("👆 Tap the glowing column to drop your tile");
+}
+function showTutorialBar(text) {
+  document.getElementById("tutorialText").textContent = text;
+  document.getElementById("tutorialBar").classList.remove("hidden");
+}
+function hideTutorialBar() {
+  document.getElementById("tutorialBar").classList.add("hidden");
+}
+function endTutorial() {
+  G.tutorial.active = false; G.tutorial.step = 0;
+  G.hintCol = -1; G.hintUntil = 0;
+  hideTutorialBar();
+}
+function advanceTutorial() {
+  if (!G.tutorial.active) return;
+  if (G.tutorial.step === 0) {
+    G.tutorial.step = 1;
+    var col = bestHintColumn();
+    if (col !== -1) { G.hintCol = col; G.selectedCol = col; G.hintUntil = Date.now() + 60000; }
+    showTutorialBar("✨ Match 3 same numbers to merge them!");
+  }
+}
+function completeTutorialStep2() {
+  if (!G.tutorial.active || G.tutorial.step !== 1) return;
+  G.tutorial.step = 2;
+  showTutorialBar("🎯 Reach tile " + G.target() + " to level up!");
+  setTimeout(function () { if (G.tutorial.step === 2) endTutorial(); }, 3000);
+}
+function updateHUD() {
+  document.getElementById("hudScore").textContent = G.score;
+  document.getElementById("hudBest").textContent = Math.max(G.best, SAVE.best, G.score);
+  document.getElementById("hudLevel").textContent = G.level;
+  document.getElementById("hudMoves").textContent = G.moves;
+  document.getElementById("hudCoins").textContent = SAVE.coins | 0;
+  document.getElementById("goalTile").textContent = G.target();
+  document.getElementById("maxTile").textContent = G.maxTile;
+  document.getElementById("goalRank").textContent = rankForLevel(G.level);
+  var pct = G.maxTile ? Math.min(100, Math.round(G.maxTile / G.target() * 100)) : 0;
+  document.getElementById("goalFill").style.width = pct + "%";
+  document.getElementById("undoCount").textContent = undoTotal();
+  document.getElementById("btnUndo").disabled = !(G.state === "playing" && undoTotal() > 0 && G.undoStack.length > 0);
+  document.getElementById("bombCount").textContent = G.bombs;
+  document.getElementById("btnBomb").disabled = !(G.state === "playing" && G.bombs > 0);
+  // Hexley's order panel — always visible during play.
+  var ot = document.getElementById("orderTile");
+  ot.textContent = G.order.value; ot.style.background = tileColor(G.order.value);
+  ot.style.color = tileTextColor(G.order.value);
+  document.getElementById("orderCount").textContent = "×" + G.order.count;
+  document.getElementById("orderProgress").textContent = G.order.done + " / " + G.order.count + " done";
+  updateChecklist();
+}
+function updatePreviews() {
+  var cur = document.getElementById("currentTile"), nxt = document.getElementById("nextTile");
+  // Wild tile: rainbow preview with a star glyph; star tiles glow gold.
+  if (G.currentWild) {
+    cur.textContent = "★"; cur.style.background = "linear-gradient(135deg,#f472b6,#a855f7 45%,#22d3ee)";
+    cur.style.color = "#ffffff"; cur.style.boxShadow = "0 0 18px 3px rgba(168,85,247,0.9)";
+    cur.title = "Wild tile — merges with any group!";
+  } else if (G.currentGolden) {
+    cur.textContent = G.current; cur.style.background = tileColor(G.current); cur.style.color = tileTextColor(G.current);
+    cur.style.boxShadow = "0 0 20px 4px rgba(255,209,102,1)";
+    cur.title = "Golden tile — merge it fast for +50 coins!";
+  } else {
+    cur.textContent = G.current; cur.style.background = tileColor(G.current); cur.style.color = tileTextColor(G.current);
+    cur.style.boxShadow = G.currentStar ? "0 0 18px 3px rgba(255,209,102,0.9)" : "none";
+    cur.title = G.currentStar ? "Star tile — merge it for +100 bonus!" : "";
+  }
+  if (G.nextWild) {
+    nxt.textContent = "★"; nxt.style.background = "linear-gradient(135deg,#f472b6,#a855f7 45%,#22d3ee)";
+    nxt.style.color = "#ffffff"; nxt.style.boxShadow = "0 0 12px 2px rgba(168,85,247,0.7)";
+  } else if (G.nextGolden) {
+    nxt.textContent = G.next; nxt.style.background = tileColor(G.next); nxt.style.color = tileTextColor(G.next);
+    nxt.style.boxShadow = "0 0 14px 3px rgba(255,209,102,0.9)";
+  } else {
+    nxt.textContent = G.next; nxt.style.background = tileColor(G.next); nxt.style.color = tileTextColor(G.next);
+    nxt.style.boxShadow = G.nextStar ? "0 0 12px 2px rgba(255,209,102,0.7)" : "none";
+  }
+}
+/* ---------- Stones, themes, daily bonus ---------- */
+function placeStones(n) {
+  // Random empty cells, lower half first (stones sit on the board floor).
+  var empties = [], c, r;
+  for (c = 0; c < COLS; c++) for (r = 3; r < ROWS; r++) if (!G.grid[c][r]) empties.push([c, r]);
+  if (!empties.length) for (c = 0; c < COLS; c++) for (r = 0; r < 3; r++) if (!G.grid[c][r]) empties.push([c, r]);
+  var placed = 0;
+  while (placed < n && empties.length) {
+    var i = Math.floor(Math.random() * empties.length);
+    var cell = empties.splice(i, 1)[0];
+    G.grid[cell[0]][cell[1]] = STONE;
+    G.tileBirth[starKey(cell[0], cell[1])] = Date.now();
+    placed++;
+  }
+  return placed;
+}
+function applyTheme(id) {
+  var t = themeById(id);
+  G.theme = t;
+  SAVE.theme = t.id;
+  var game = document.getElementById("game");
+  if (game) game.style.background = t.bg[1];
+}
+function selectTheme(id) {
+  var unlocked = unlockedThemeIds(Math.max(SAVE.level, G.level));
+  if (unlocked.indexOf(id) === -1) return;
+  applyTheme(id);
+  persistSave();
+  renderThemes();
+  AudioSys.click();
+}
+function renderThemes() {
+  var row = document.getElementById("themeRow");
+  if (!row) return;
+  var unlocked = unlockedThemeIds(Math.max(SAVE.level, G.level));
+  var html = "", i;
+  for (i = 0; i < THEMES.length; i++) {
+    var t = THEMES[i];
+    var isOpen = unlocked.indexOf(t.id) !== -1;
+    var sel = (G.theme && G.theme.id === t.id) ? " selected" : "";
+    var label = isOpen ? t.name : "🔒 " + t.name + " · Lv " + t.unlock;
+    html += '<button type="button" class="themeBtn' + sel + '" data-theme="' + t.id + '"' +
+      (isOpen ? "" : " disabled") + ' style="border-color:' + t.accent + '">' + label + "</button>";
+  }
+  row.innerHTML = html;
+  var btns = row.querySelectorAll ? row.querySelectorAll(".themeBtn") : [];
+  for (i = 0; i < btns.length; i++) {
+    (function (b) {
+      b.addEventListener("click", function () { selectTheme(b.getAttribute("data-theme")); });
+    })(btns[i]);
+  }
+}
+function dateStr(d) {
+  var m = d.getMonth() + 1, day = d.getDate();
+  return d.getFullYear() + "-" + (m < 10 ? "0" + m : m) + "-" + (day < 10 ? "0" + day : day);
+}
+function checkDailyBonus() {
+  var box = document.getElementById("dailyBonus");
+  if (!box) return;
+  var today = dateStr(new Date());
+  var y = new Date(); y.setDate(y.getDate() - 1);
+  var nextStreak = dailyStreakOnClaim(SAVE.lastDaily, today, dateStr(y), SAVE.dailyStreak | 0);
+  if (!isDailyAvailable(SAVE.lastDaily, today)) { box.classList.add("hidden"); return; }
+  document.getElementById("dailyBonusText").textContent =
+    "🎁 Daily Bonus — Day " + nextStreak + " streak! Claim +3 Undo.";
+  box.classList.remove("hidden");
+}
+function claimDailyBonus() {
+  var today = dateStr(new Date());
+  var y = new Date(); y.setDate(y.getDate() - 1);
+  SAVE.dailyStreak = dailyStreakOnClaim(SAVE.lastDaily, today, dateStr(y), SAVE.dailyStreak | 0);
+  SAVE.lastDaily = today;
+  SAVE.bonusUndos = (SAVE.bonusUndos | 0) + 3;
+  persistSave();
+  document.getElementById("dailyBonus").classList.add("hidden");
+  document.getElementById("menuStreak").textContent = "🔥 " + SAVE.dailyStreak + "-day streak";
+  AudioSys.click();
+  updateHUD();
+}
+function updateSoundLabel() {
+  var on = !AudioSys.userMuted && !CG.sdkMuted;
+  var label = "🔊 Sound: " + (on ? "On" : "Off");
+  document.getElementById("btnSound").textContent = label;
+  document.getElementById("btnSoundPause").textContent = label;
+  Music.applyMute();
+}
+function hideAllOverlays() {
+  document.getElementById("menuOverlay").classList.add("hidden");
+  document.getElementById("pauseOverlay").classList.add("hidden");
+  document.getElementById("overOverlay").classList.add("hidden");
+}
+function startGame() {
+  AudioSys.ensure();
+  newRun();
+  hideAllOverlays();
+  G.state = "playing";
+  CG.setContext(G.level, G.score);
+  CG.gameplayStart();
+  Music.start();
+  startTutorial();
+  updateHUD(); updatePreviews();
+}
+function pauseGame() {
+  if (G.state !== "playing") return;
+  G.state = "paused";
+  CG.gameplayStop();
+  Music.stop();
+  document.getElementById("pauseScore").textContent = G.score;
+  document.getElementById("pauseLevel").textContent = G.level;
+  document.getElementById("pauseMoves").textContent = G.moves;
+  document.getElementById("pauseMax").textContent = G.maxTile;
+  document.getElementById("pauseOverlay").classList.remove("hidden");
+  updateHUD();
+}
+function resumeGame() {
+  if (G.state !== "paused") return;
+  document.getElementById("pauseOverlay").classList.add("hidden");
+  G.state = "playing";
+  CG.gameplayStart();
+  Music.start();
+  updateHUD();
+}
+function restartFromPause() {
+  document.getElementById("pauseOverlay").classList.add("hidden");
+  startGame();
+}
+function gameOver() {
+  G.state = "over";
+  CG.gameplayStop();
+  Music.stop();
+  endTutorial();
+  AudioSys.gameOver();
+  var isNewBest = G.score > SAVE.best;
+  G.best = Math.max(G.best, SAVE.best, G.score);
+  if (G.score > SAVE.best) SAVE.best = G.score;
+  if (G.maxTile > SAVE.maxTile) SAVE.maxTile = G.maxTile;
+  if (G.level > SAVE.level) SAVE.level = G.level;
+  if (G.bestStreak > SAVE.bestStreak) SAVE.bestStreak = G.bestStreak;
+  persistSave();
+  document.getElementById("finalScore").textContent = G.score;
+  document.getElementById("finalBest").textContent = SAVE.best;
+  document.getElementById("finalMax").textContent = G.maxTile;
+  document.getElementById("finalLevel").textContent = G.level;
+  document.getElementById("finalCombo").textContent = "×" + (SAVE.bestCombo || 0);
+  document.getElementById("finalStreak").textContent = SAVE.bestStreak || 0;
+  document.getElementById("newBestBadge").classList.toggle("hidden", !isNewBest);
+  document.getElementById("overOverlay").classList.remove("hidden");
+  updateHUD();
+  // No automatic midgame ad here: a midgame ad must never be combined with
+  // a rewarded Continue on the same screen. The rewarded Continue below is
+  // the only ad on this screen, and it only fires from a user tap.
+}
+var AD_COOLDOWN_MS = 30000; // after a failed/unavailable ad, wait 30s before re-enabling
+function armCooldown(btn) {
+  // Re-enable a rewarded button only after the cooldown (never after 2s).
+  if (!btn || btn.style.display === "none") return;
+  btn.disabled = true;
+  setTimeout(function () { if (btn.style.display !== "none") btn.disabled = false; }, AD_COOLDOWN_MS);
+}
+// First failed/unfilled ad request (Basic Launch has ads disabled, or an
+// adblocker is active): rewarded buttons would do nothing when tapped, so
+// hide them for the session and say why. The free Play Again stays.
+var adsHiddenForSession = false;
+function hideRewardedButtons() {
+  adsHiddenForSession = true;
+  var ids = ["btnContinueAd", "btnUndoAdOver", "btnUndoAdPause"];
+  for (var i = 0; i < ids.length; i++) {
+    var el = document.getElementById(ids[i]);
+    if (el) el.style.display = "none";
+  }
+  var notes = document.querySelectorAll ? document.querySelectorAll(".adNote") : [];
+  for (var j = 0; j < notes.length; j++) notes[j].classList.remove("hidden");
+}
+function requestRewarded(onGranted) {
+  // Rewarded ads are only ever started from a user tap. Grant ONLY on adFinished.
+  // Audio is muted ONLY inside adStarted — never immediately on tap, so a
+  // failed request never leaves the game silent.
+  if (!CG.available) return false;
+  var granted = false;
+  var ok = CG.requestAd("rewarded", {
+    adStarted: function () { AudioSys.adMuted = true; },
+    adFinished: function () {
+      AudioSys.adMuted = false;
+      if (!granted) { granted = true; try { onGranted(); } catch (e) {} }
+    },
+    adError: function () {
+      AudioSys.adMuted = false; /* no reward, game continues */
+      hideRewardedButtons(); // no ad filled: never show a dead button again
+    }
+  });
+  return ok;
+}
+function clearLowestTiles(n) {
+  // Rescue tool shared by the Bomb button and the rewarded Continue:
+  // removes n random tiles from the 12 lowest occupied cells.
+  var cells = [], c, r;
+  for (c = 0; c < COLS; c++) for (r = 0; r < ROWS; r++) if (G.grid[c][r]) cells.push([c, r]);
+  cells.sort(function (a, b) { return b[1] - a[1]; });
+  var pool = cells.slice(0, Math.min(12, cells.length));
+  for (var i = pool.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = pool[i]; pool[i] = pool[j]; pool[j] = t; }
+  var picked = pool.slice(0, Math.min(n, pool.length));
+  for (i = 0; i < picked.length; i++) {
+    var p = cellCenter(picked[i][0], picked[i][1]);
+    addParticles(p.x, p.y, "#22d3ee", 10);
+    G.grid[picked[i][0]][picked[i][1]] = 0;
+    delete G.starCells[starKey(picked[i][0], picked[i][1])];
+    delete G.tileBirth[starKey(picked[i][0], picked[i][1])];
+  }
+  applyGravity(G.grid);
+  return picked.length;
+}
+function useBomb() {
+  if (G.state !== "playing" || G.bombs <= 0) return;
+  var filled = 0, c, r;
+  for (c = 0; c < COLS; c++) for (r = 0; r < ROWS; r++) if (G.grid[c][r]) filled++;
+  if (!filled) return;
+  G.undoStack.push(snapshot());
+  if (G.undoStack.length > 40) G.undoStack.shift();
+  G.bombs--;
+  var cleared = clearLowestTiles(3);
+  AudioSys.merge(1, 3);
+  G.shake = Math.max(G.shake, 5);
+  addFloat(BOARD_X + BOARD_W / 2, BOARD_Y + 40, "💣 Boom! " + cleared + " tiles cleared!", "#fca5a5");
+  updateHUD();
+}
+function continueAfterAd() {
+  // Clear 3 random lowest tiles, then resume.
+  clearLowestTiles(3);
+  document.getElementById("overOverlay").classList.add("hidden");
+  G.state = "playing";
+  CG.gameplayStart();
+  Music.start();
+  addFloat(BOARD_X + BOARD_W / 2, BOARD_Y + 40, "3 tiles cleared!", "#22d3ee");
+  updateHUD();
+}
+function grantUndoBonus() {
+  G.undoCharges += 2;
+  addFloat(BOARD_X + BOARD_W / 2, BOARD_Y + 40, "+2 Undo!", "#ffd166");
+  updateHUD();
+}
+
+/* ---------- Drop + merge resolution ---------- */
+function sleep(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
+async function dropTile(col) {
+  if (G.state !== "playing" || G.falling) return;
+  var row = lowestEmptyRow(G.grid, col);
+  if (row === -1) return;
+  AudioSys.ensure();
+  G.undoStack.push(snapshot());
+  if (G.undoStack.length > 40) G.undoStack.shift();
+  var value = G.currentWild ? WILD : G.current;
+  var droppedStar = G.currentStar && !G.currentWild;
+  var droppedWild = G.currentWild;
+  var droppedGolden = G.currentGolden && !G.currentWild;
+  G.current = G.next; G.next = randomTileValue();
+  G.currentStar = G.nextStar; G.nextStar = rollStar();
+  G.currentWild = G.nextWild; G.nextWild = rollWild();
+  G.currentGolden = G.nextGolden; G.nextGolden = rollGolden();
+  updatePreviews();
+  G.moves++;
+  G.lastCombo = 0;
+  var target = cellCenter(col, row);
+  G.falling = { col: col, row: row, value: value, y: BOARD_Y - 70, targetY: target.y, x: target.x, star: droppedStar, wild: droppedWild, golden: droppedGolden };
+  AudioSys.place();
+  // Short drop animation (driven by the render loop)
+  await sleep(190);
+  G.grid[col][row] = value;
+  if (droppedStar) G.starCells[starKey(col, row)] = true;
+  if (droppedGolden) G.goldenCells[starKey(col, row)] = true;
+  G.tileBirth[starKey(col, row)] = Date.now();
+  G.falling = null;
+  addFlash(target.x, target.y); // instant landing feedback
+  if (value > G.maxTile) G.maxTile = value;
+  updateHUD();
+  advanceTutorial();
+  await resolveAfterDrop(droppedStar);
+}
+async function resolveAfterDrop(droppedStar) {
+  G.state = "resolving";
+  var result = resolveMerges(G.grid);
+  var mergedStar = false, mergedGolden = false, orderCompleted = false;
+  // Visual feedback per merge event (staggered, quick)
+  for (var i = 0; i < result.events.length; i++) {
+    var ev = result.events[i];
+    var p = cellCenter(ev.col, ev.row);
+    // Star transfers: if any merged tile was a star, the new tile is a star.
+    var evStar = false, evGolden = false, k;
+    for (k = 0; k < ev.cells.length; k++) {
+      if (G.starCells[starKey(ev.cells[k][0], ev.cells[k][1])]) { evStar = true; delete G.starCells[starKey(ev.cells[k][0], ev.cells[k][1])]; }
+      if (G.goldenCells[starKey(ev.cells[k][0], ev.cells[k][1])]) { evGolden = true; delete G.goldenCells[starKey(ev.cells[k][0], ev.cells[k][1])]; }
+    }
+    if (evStar) { mergedStar = true; G.starCells[starKey(ev.col, ev.row)] = true; }
+    if (evGolden) { mergedGolden = true; G.goldenCells[starKey(ev.col, ev.row)] = true; }
+    G.tileBirth[starKey(ev.col, ev.row)] = Date.now();
+    // Hexley's order: a merge that makes the ordered tile fills the order.
+    var ord = applyOrderProgress(G.order, ev.value);
+    if (ord.done !== G.order.done) {
+      G.order = ord;
+      if (ord.complete) {
+        orderCompleted = true;
+        G.score += 150;
+        addFloat(BOARD_X + BOARD_W / 2, BOARD_Y + 90, "🧾 Order complete! +150", "#ffd166");
+        G.order = nextOrder(ord);
+      }
+    }
+    addParticles(p.x, p.y, tileColor(ev.value), 14);
+    if (ev.size >= 4 || ev.combo >= 2) G.shake = Math.max(G.shake, 7);
+    addFloat(p.x, p.y - 20, "+" + scoreForMerge(ev.value - 1, ev.size, ev.combo), "#ffd166");
+    AudioSys.merge(ev.combo, ev.value);
+    await sleep(120);
+  }
+  if (result.score) G.score += result.score;
+  // Star bonus: a star tile that took part in a merge pays +100.
+  var bonus = starBonus(mergedStar, result.merged);
+  if (bonus) {
+    G.score += bonus;
+    addFloat(BOARD_X + BOARD_W / 2, BOARD_Y + 110, "★ STAR BONUS +" + bonus, "#ffd166");
+  }
+  // Golden bonus: a golden tile merged in time pays +100 score +50 coins.
+  if (mergedGolden && result.merged) {
+    G.score += 100;
+    addFloat(BOARD_X + BOARD_W / 2, BOARD_Y + 130, "🌟 GOLDEN BONUS +100  •  +50 coins!", "#ffd166");
+  }
+  // Coins: 1 per 10 merge points, +15 per completed order, +50 golden.
+  var coinsEarned = coinsForMergeScore(result.score) + (orderCompleted ? 15 : 0) + (mergedGolden && result.merged ? 50 : 0);
+  if (coinsEarned > 0) { SAVE.coins = (SAVE.coins | 0) + coinsEarned; G.levelCoins += coinsEarned; }
+  // Stones smashed by merges: +50 each is already inside result.score.
+  if (result.stonesBroken) {
+    for (var si = 0; si < result.stoneEvents.length; si++) {
+      var sp = cellCenter(result.stoneEvents[si].col, result.stoneEvents[si].row);
+      addParticles(sp.x, sp.y, "#9ca3af", 16);
+    }
+    addFloat(BOARD_X + BOARD_W / 2, BOARD_Y + 140,
+      "🪨 Stone smashed! +" + (result.stonesBroken * 50), "#d1d5db");
+  }
+  // Combo + streak tracking.
+  if (result.merged) {
+    G.hasMerged = true;
+    G.lastCombo = Math.max(1, result.chains);
+    G.lastComboAt = Date.now();
+    G.streak++;
+    if (G.streak > G.bestStreak) G.bestStreak = G.streak;
+    if (result.chains > SAVE.bestCombo) SAVE.bestCombo = result.chains;
+    if (result.chains >= 2) addFloat(BOARD_X + BOARD_W / 2, BOARD_Y + 60, "COMBO ×" + result.chains + "!", "#f472b6");
+    completeTutorialStep2();
+  } else {
+    G.streak = 0;
+  }
+  updateComboBadge();
+  if (result.maxTile > G.maxTile) {
+    var isNewBestTile = result.maxTile > G.maxTile;
+    G.maxTile = result.maxTile;
+    if (isNewBestTile) CG.happytime();
+  }
+  updateHUD();
+  // Level up?
+  if (G.maxTile >= G.target()) {
+    G.level++;
+    G.undoCharges++;
+    var hadBombRoom = G.bombs < 3;
+    G.bombs = Math.min(3, G.bombs + 1); // rescue refill on level-up
+    G.order = orderForLevel(G.level); // a fresh order for the new level
+    G.score += 250 * G.level;
+    // happytime only on milestone levels (every 5th) — never every level.
+    if (G.level % 5 === 0) CG.happytime();
+    CG.reportProgress(Math.min(100, G.level * 10));
+    CG.setContext(G.level, G.score);
+    AudioSys.levelUp();
+    G.shake = 10;
+    addConfetti();
+    // New mechanics arrive with the level: stones from level 3.
+    var stones = placeStones(stoneCountForLevel(G.level));
+    // A theme may have unlocked at this level.
+    var newly = null, ti;
+    for (ti = 0; ti < THEMES.length; ti++) if (THEMES[ti].unlock === G.level) newly = THEMES[ti];
+    if (newly) renderThemes();
+    if (G.score > SAVE.best) SAVE.best = G.score;
+    if (G.maxTile > SAVE.maxTile) SAVE.maxTile = G.maxTile;
+    if (G.level > SAVE.level) SAVE.level = G.level;
+    persistSave();
+    // Celebratory results screen (stars, score + coins earned, next goal)
+    // instead of a plain "Level up" note. Continues on tap or after 3s.
+    var rewards = ["+1 Undo"];
+    if (hadBombRoom) rewards.push("+1 Bomb");
+    if (stones) rewards.push(stones + " stone tile" + (stones > 1 ? "s" : "") + " appeared!");
+    if (newly) rewards.push("New theme: " + newly.name);
+    await showLevelResults(rewards.join("  •  "));
+    G.levelCoins = 0; G.movesAtLevelStart = G.moves;
+    updateHUD();
+  }
+  G.state = "playing";
+  updateHUD();
+  if (isBoardFull(G.grid)) gameOver();
+}
+
+/* ---------- Rendering ---------- */
+function hexPath(c, x, y, r) {
+  c.beginPath();
+  for (var i = 0; i < 6; i++) {
+    var a = -Math.PI / 2 + i * Math.PI / 3;
+    var px = x + r * Math.cos(a), py = y + r * Math.sin(a);
+    if (i === 0) c.moveTo(px, py); else c.lineTo(px, py);
+  }
+  c.closePath();
+}
+function shadeColor(hex, pct) {
+  // Lighten (pct>0) or darken (pct<0) a #rrggbb colour.
+  var n = parseInt(hex.slice(1), 16);
+  var r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  function adj(v) { return Math.max(0, Math.min(255, Math.round(v + (pct > 0 ? (255 - v) * pct : v * pct)))); }
+  return "rgb(" + adj(r) + "," + adj(g) + "," + adj(b) + ")";
+}
+function easeOutBack(t) {
+  var c1 = 1.70158, c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+}
+function drawTile(c, x, y, r, value, alpha, opts) {
+  opts = opts || {};
+  c.save();
+  c.globalAlpha = (alpha == null ? 1 : alpha);
+  // Soft drop shadow (skip for ghost previews)
+  if (!opts.ghost) {
+    c.shadowColor = opts.golden ? "rgba(255,209,102,0.9)" : "rgba(0,0,0,0.45)";
+    c.shadowBlur = opts.golden ? 16 : 10; c.shadowOffsetY = 4;
+  }
+  // Vertical gradient: lighter at the top, rich colour at the bottom.
+  var grad = c.createLinearGradient(x, y - r, x, y + r);
+  grad.addColorStop(0, shadeColor(tileColor(value), 0.45));
+  grad.addColorStop(0.55, tileColor(value));
+  grad.addColorStop(1, shadeColor(tileColor(value), -0.3));
+  hexPath(c, x, y, r);
+  c.fillStyle = grad; c.fill();
+  c.shadowColor = "transparent"; c.shadowBlur = 0; c.shadowOffsetY = 0;
+  c.lineWidth = 2; c.strokeStyle = "rgba(255,255,255,0.45)"; c.stroke();
+  // Gloss highlight at the top of the tile (big soft sheen + a bright rim).
+  c.beginPath();
+  c.moveTo(x - r * 0.48, y - r * 0.62);
+  c.lineTo(x + r * 0.48, y - r * 0.62);
+  c.lineTo(x + r * 0.22, y - r * 0.08);
+  c.lineTo(x - r * 0.22, y - r * 0.08);
+  c.closePath();
+  c.fillStyle = "rgba(255,255,255,0.34)"; c.fill();
+  // Bottom shade: a darker crescent so the tile reads as a chunky 3D piece.
+  c.beginPath();
+  c.moveTo(x - r * 0.42, y + r * 0.62);
+  c.lineTo(x + r * 0.42, y + r * 0.62);
+  c.lineTo(x + r * 0.18, y + r * 0.18);
+  c.lineTo(x - r * 0.18, y + r * 0.18);
+  c.closePath();
+  c.fillStyle = "rgba(0,0,0,0.14)"; c.fill();
+  // Number
+  c.fillStyle = tileTextColor(value);
+  c.font = "900 " + Math.round(r * 0.95) + "px system-ui, Arial, sans-serif";
+  c.textAlign = "center"; c.textBaseline = "middle";
+  c.fillText(String(value), x, y + 1);
+  // Star tile: gold ring + small star glyph.
+  if (opts.star) {
+    c.lineWidth = 3; c.strokeStyle = "#ffd166";
+    hexPath(c, x, y, r - 3); c.stroke();
+    c.fillStyle = "#ffd166";
+    c.font = "900 " + Math.round(r * 0.5) + "px system-ui, Arial, sans-serif";
+    c.fillText("★", x, y - r * 0.52);
+  }
+  // Golden tile: thick gold ring (the surprise bonus tile).
+  if (opts.golden) {
+    c.lineWidth = 4; c.strokeStyle = "#ffd166";
+    hexPath(c, x, y, r - 2); c.stroke();
+  }
+  c.restore();
+}
+/* Stone blocker: grey rock hex with crack lines, no number.
+   Wild tile: rainbow gradient hex with a white star — merges with any group. */
+function drawStone(c, x, y, r, alpha) {
+  c.save();
+  c.globalAlpha = (alpha == null ? 1 : alpha);
+  c.shadowColor = "rgba(0,0,0,0.45)"; c.shadowBlur = 10; c.shadowOffsetY = 4;
+  var grad = c.createLinearGradient(x, y - r, x, y + r);
+  grad.addColorStop(0, "#9ca3af"); grad.addColorStop(0.55, "#6b7280"); grad.addColorStop(1, "#4b5563");
+  hexPath(c, x, y, r);
+  c.fillStyle = grad; c.fill();
+  c.shadowColor = "transparent"; c.shadowBlur = 0; c.shadowOffsetY = 0;
+  c.lineWidth = 2; c.strokeStyle = "rgba(255,255,255,0.35)"; c.stroke();
+  c.beginPath();
+  c.moveTo(x - r * 0.3, y - r * 0.45); c.lineTo(x - r * 0.05, y - r * 0.05); c.lineTo(x - r * 0.35, y + r * 0.4);
+  c.moveTo(x + r * 0.35, y - r * 0.3); c.lineTo(x + r * 0.1, y + r * 0.1); c.lineTo(x + r * 0.4, y + r * 0.45);
+  c.lineWidth = 2.5; c.strokeStyle = "rgba(31,41,55,0.8)"; c.stroke();
+  c.restore();
+}
+function drawWild(c, x, y, r, alpha, ghost) {
+  c.save();
+  c.globalAlpha = (alpha == null ? 1 : alpha);
+  if (!ghost) {
+    c.shadowColor = "rgba(168,85,247,0.7)"; c.shadowBlur = 14; c.shadowOffsetY = 4;
+  }
+  var grad = c.createLinearGradient(x - r, y - r, x + r, y + r);
+  grad.addColorStop(0, "#f472b6"); grad.addColorStop(0.5, "#a855f7"); grad.addColorStop(1, "#22d3ee");
+  hexPath(c, x, y, r);
+  c.fillStyle = grad; c.fill();
+  c.shadowColor = "transparent"; c.shadowBlur = 0; c.shadowOffsetY = 0;
+  c.lineWidth = 2; c.strokeStyle = "rgba(255,255,255,0.6)"; c.stroke();
+  c.fillStyle = "#ffffff";
+  c.font = "900 " + Math.round(r * 0.85) + "px system-ui, Arial, sans-serif";
+  c.textAlign = "center"; c.textBaseline = "middle";
+  c.fillText("★", x, y + 1);
+  c.restore();
+}
+function drawTileAt(c, x, y, r, value, alpha, opts) {
+  // Single dispatch for the three tile kinds (numbered / stone / wild).
+  if (value === STONE) { drawStone(c, x, y, r, alpha); return; }
+  if (value === WILD) { drawWild(c, x, y, r, alpha, opts && opts.ghost); return; }
+  drawTile(c, x, y, r, value, alpha, opts);
+}
+var BG_ORBS = [
+  { x: 140, y: 140, r: 150, color: "34,211,238", vx: 6, vy: 4 },
+  { x: 830, y: 90, r: 130, color: "168,85,247", vx: -5, vy: 5 },
+  { x: 480, y: 520, r: 170, color: "244,114,182", vx: 4, vy: -4 },
+  { x: 80, y: 480, r: 110, color: "251,191,36", vx: 5, vy: -3 }
+];
+var lastTime = 0;
+function render(ts) {
+  requestAnimationFrame(render);
+  var dt = Math.min(0.05, (ts - lastTime) / 1000 || 0.016);
+  lastTime = ts;
+  var now = Date.now();
+  // Background gradient (current board theme; Midnight by default)
+  ctx.clearRect(0, 0, 960, 600);
+  var bgGrad = ctx.createLinearGradient(0, 0, 0, 600);
+  var themeBg = (G.theme && G.theme.bg) ? G.theme.bg : THEMES[0].bg;
+  bgGrad.addColorStop(0, themeBg[0]); bgGrad.addColorStop(0.55, themeBg[1]); bgGrad.addColorStop(1, themeBg[2]);
+  ctx.fillStyle = bgGrad; ctx.fillRect(0, 0, 960, 600);
+  // Drifting glow orbs
+  var oi;
+  for (oi = 0; oi < BG_ORBS.length; oi++) {
+    var orb = BG_ORBS[oi];
+    orb.x += orb.vx * dt; orb.y += orb.vy * dt;
+    if (orb.x < -orb.r) orb.x = 960 + orb.r; if (orb.x > 960 + orb.r) orb.x = -orb.r;
+    if (orb.y < -orb.r) orb.y = 600 + orb.r; if (orb.y > 600 + orb.r) orb.y = -orb.r;
+    var og = ctx.createRadialGradient(orb.x, orb.y, 0, orb.x, orb.y, orb.r);
+    og.addColorStop(0, "rgba(" + orb.color + ",0.14)");
+    og.addColorStop(1, "rgba(" + orb.color + ",0)");
+    ctx.fillStyle = og; ctx.fillRect(orb.x - orb.r, orb.y - orb.r, orb.r * 2, orb.r * 2);
+  }
+  // Subtle background hex pattern
+  ctx.save(); ctx.globalAlpha = 0.05; ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1;
+  var bx, by;
+  for (bx = 0; bx < 16; bx++) for (by = 0; by < 10; by++) {
+    hexPath(ctx, bx * 62 + (by % 2 ? 31 : 0), by * 54, 26); ctx.stroke();
+  }
+  ctx.restore();
+  // Screen shake (decays fast) — applies to the whole board layer.
+  G.shake *= Math.pow(0.02, dt);
+  if (G.shake < 0.2) G.shake = 0;
+  var shX = G.shake ? (Math.random() - 0.5) * G.shake : 0;
+  var shY = G.shake ? (Math.random() - 0.5) * G.shake : 0;
+  ctx.save();
+  ctx.translate(shX, shY);
+  // Board panel
+  ctx.save();
+  ctx.fillStyle = "rgba(255,255,255,0.04)";
+  ctx.strokeStyle = "rgba(255,255,255,0.08)";
+  roundRect(ctx, BOARD_X - 18, BOARD_Y - 18, BOARD_W + 36, BOARD_H + 36, 16);
+  ctx.fill(); ctx.stroke();
+  ctx.restore();
+  // Column highlight (hover / keyboard / hint / tutorial)
+  if (G.state === "playing" || G.state === "resolving") {
+    var col = G.selectedCol;
+    var glow = (now < G.hintUntil && G.hintCol === col);
+    var tutGlow = G.tutorial.active && G.tutorial.step === 0 && G.hintCol === col;
+    ctx.save();
+    ctx.globalAlpha = (glow || tutGlow) ? 0.32 : 0.12;
+    ctx.fillStyle = (glow || tutGlow) ? "#ffd166" : "#ffffff";
+    var hx = BOARD_X + col * COL_STEP;
+    roundRect(ctx, hx - 6, BOARD_Y - 14, COL_STEP + 12, BOARD_H + 28, 12);
+    ctx.fill();
+    ctx.restore();
+    // Ghost preview of the current tile at the landing cell
+    var grow = lowestEmptyRow(G.grid, col);
+    if (grow !== -1 && !G.falling) {
+      var gp = cellCenter(col, grow);
+      var ghostVal = G.currentWild ? WILD : G.current;
+      drawTileAt(ctx, gp.x, gp.y, HEX_R - 3, ghostVal, 0.35, { ghost: true, star: G.currentStar });
+    }
+    // Tutorial hand: a big pointing hand bobs above the highlighted column
+    // (below the HUD, which ends at y=62 — a hand higher up would be hidden).
+    if (tutGlow) {
+      var ay = BOARD_Y - 8 + Math.sin(now / 180) * 5;
+      ctx.save();
+      ctx.font = "34px system-ui, Arial, sans-serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText("👇", hx + COL_STEP / 2, ay + 10);
+      ctx.restore();
+    }
+  }
+  // Empty cells + tiles (tiles pop in with an ease-out-back scale)
+  var c, r;
+  for (c = 0; c < COLS; c++) {
+    for (r = 0; r < ROWS; r++) {
+      var p = cellCenter(c, r);
+      if (!G.grid[c][r]) {
+        hexPath(ctx, p.x, p.y, HEX_R - 2);
+        ctx.fillStyle = "#1e1e40"; ctx.fill();
+        ctx.lineWidth = 1.5; ctx.strokeStyle = "rgba(255,255,255,0.10)"; ctx.stroke();
+      } else {
+        var birth = G.tileBirth[starKey(c, r)];
+        var scale = 1;
+        if (birth) {
+          var age = (now - birth) / 240;
+          scale = age >= 1 ? 1 : Math.max(0.3, easeOutBack(age));
+        }
+        drawTileAt(ctx, p.x, p.y, (HEX_R - 2) * scale, G.grid[c][r], 1, { star: !!G.starCells[starKey(c, r)], golden: !!G.goldenCells[starKey(c, r)] });
+        // Golden tile pulse: a breathing gold ring so the surprise is visible.
+        if (G.goldenCells[starKey(c, r)]) {
+          ctx.save();
+          ctx.globalAlpha = 0.55 + 0.35 * Math.sin(now / 200);
+          ctx.lineWidth = 3; ctx.strokeStyle = "#ffd166";
+          hexPath(ctx, p.x, p.y, HEX_R + 3); ctx.stroke();
+          ctx.restore();
+        }
+      }
+    }
+  }
+  // Falling tile
+  if (G.falling) {
+    var f = G.falling;
+    f.y += (f.targetY - f.y) * Math.min(1, dt * 18);
+    if (Math.abs(f.targetY - f.y) < 2) f.y = f.targetY;
+    drawTileAt(ctx, f.x, f.y, HEX_R - 2, f.value, 1, { star: !!f.star, golden: !!f.golden });
+  }
+  // Landing flashes: expanding gold rings where tiles just landed.
+  for (var fi = G.flashes.length - 1; fi >= 0; fi--) {
+    var fl2 = G.flashes[fi];
+    fl2.life -= dt;
+    if (fl2.life <= 0) { G.flashes.splice(fi, 1); continue; }
+    var prog = 1 - fl2.life / fl2.max;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, 1 - prog);
+    ctx.lineWidth = 3; ctx.strokeStyle = "#ffd166";
+    ctx.beginPath(); ctx.arc(fl2.x, fl2.y, HEX_R * (0.9 + prog * 0.7), 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+  // Particles (confetti pieces flutter down slower than sparks)
+  for (var i = G.particles.length - 1; i >= 0; i--) {
+    var pt = G.particles[i];
+    pt.life -= dt; pt.x += pt.vx * dt; pt.y += pt.vy * dt;
+    pt.vy += pt.confetti ? 90 * dt : 180 * dt;
+    if (pt.life <= 0) { G.particles.splice(i, 1); continue; }
+    ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, pt.life)); ctx.fillStyle = pt.color;
+    if (pt.confetti) { ctx.fillRect(pt.x - pt.r / 2, pt.y - pt.r / 2, pt.r, pt.r * 0.6); }
+    else { ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI * 2); ctx.fill(); }
+    ctx.restore();
+  }
+  // Floating texts
+  ctx.save(); ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (var j = G.floats.length - 1; j >= 0; j--) {
+    var fl = G.floats[j];
+    fl.life -= dt; fl.y -= 28 * dt;
+    if (fl.life <= 0) { G.floats.splice(j, 1); continue; }
+    ctx.globalAlpha = Math.min(1, fl.life);
+    ctx.font = "900 22px system-ui, Arial, sans-serif";
+    ctx.fillStyle = fl.color;
+    ctx.fillText(fl.text, fl.x, fl.y);
+  }
+  ctx.restore();
+  ctx.restore(); // end shake transform
+  if (G.lastCombo >= 2) updateComboBadge();
+  if (now >= G.hintCooldownUntil) updateHintButton();
+}
+function roundRect(c, x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x + r, y); c.lineTo(x + w - r, y); c.quadraticCurveTo(x + w, y, x + w, y + r);
+  c.lineTo(x + w, y + h - r); c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  c.lineTo(x + r, y + h); c.quadraticCurveTo(x, y + h, x, y + h - r);
+  c.lineTo(x, y + r); c.quadraticCurveTo(x, y, x + r, y); c.closePath();
+}
+requestAnimationFrame(render);
+
+/* ---------- Input ---------- */
+function canvasPos(e) {
+  var rect = canvas.getBoundingClientRect();
+  var clientX = (e.touches && e.touches[0]) ? e.touches[0].clientX : e.clientX;
+  var clientY = (e.touches && e.touches[0]) ? e.touches[0].clientY : e.clientY;
+  return { x: (clientX - rect.left) * (960 / rect.width), y: (clientY - rect.top) * (600 / rect.height) };
+}
+canvas.addEventListener("pointermove", function (e) {
+  if (G.state !== "playing") return;
+  var p = canvasPos(e);
+  if (p.y > BOARD_Y - 20 && p.y < BOARD_Y + BOARD_H + 20) G.selectedCol = columnFromX(p.x);
+});
+canvas.addEventListener("pointerdown", function (e) {
+  AudioSys.ensure();
+  if (G.state !== "playing") return;
+  var p = canvasPos(e);
+  var col = columnFromX(p.x);
+  G.selectedCol = col;
+  dropTile(col);
+});
+document.addEventListener("keydown", function (e) {
+  // One-tap entry: Space / Enter on the title or game-over screen starts
+  // a game immediately — no extra clicks, zero friction.
+  if ((G.state === "menu" || G.state === "over") && (e.key === " " || e.key === "Enter")) {
+    startGame(); e.preventDefault(); return;
+  }
+  if (G.state === "levelup" && (e.key === " " || e.key === "Enter")) {
+    continueLevel(); e.preventDefault(); return;
+  }
+  if (G.state === "playing") {
+    if (e.key === "ArrowLeft") { G.selectedCol = Math.max(0, G.selectedCol - 1); e.preventDefault(); }
+    else if (e.key === "ArrowRight") { G.selectedCol = Math.min(COLS - 1, G.selectedCol + 1); e.preventDefault(); }
+    else if (e.key === " " || e.key === "Enter" || e.key === "ArrowDown") { dropTile(G.selectedCol); e.preventDefault(); }
+    else if (e.key === "u" || e.key === "U") doUndo();
+    else if (e.key === "h" || e.key === "H") useHint();
+    else if (e.key === "b" || e.key === "B") useBomb();
+    else if (e.key === "p" || e.key === "P") pauseGame();
+    else if (e.key === "m" || e.key === "M") toggleSound();
+  } else if (G.state === "paused" && (e.key === "p" || e.key === "P")) {
+    resumeGame();
+  }
+});
+document.addEventListener("touchend", function () { AudioSys.ensure(); }, { passive: true });
+function toggleSound() {
+  AudioSys.userMuted = !AudioSys.userMuted;
+  if (!AudioSys.userMuted) AudioSys.ensure();
+  updateSoundLabel();
+}
+
+/* ---------- Buttons ---------- */
+document.getElementById("btnPlay").addEventListener("click", function () { AudioSys.ensure(); AudioSys.click(); startGame(); });
+document.getElementById("btnSkipTutorial").addEventListener("click", function () { AudioSys.click(); endTutorial(); });
+document.getElementById("btnContinueLevel").addEventListener("click", function () { AudioSys.click(); continueLevel(); });
+document.getElementById("btnPlayAgain").addEventListener("click", function () { AudioSys.click(); startGame(); });
+document.getElementById("btnPause").addEventListener("click", function () { AudioSys.click(); pauseGame(); });
+document.getElementById("btnResume").addEventListener("click", function () { AudioSys.click(); resumeGame(); });
+document.getElementById("btnRestartPause").addEventListener("click", function () { AudioSys.click(); restartFromPause(); });
+document.getElementById("btnUndo").addEventListener("click", function () { doUndo(); updateHUD(); });
+document.getElementById("btnHint").addEventListener("click", function () { useHint(); });
+document.getElementById("btnBomb").addEventListener("click", function () { useBomb(); });
+document.getElementById("btnRestart").addEventListener("click", function () { AudioSys.click(); startGame(); });
+document.getElementById("btnSound").addEventListener("click", function () { toggleSound(); });
+document.getElementById("btnSoundPause").addEventListener("click", function () { toggleSound(); });
+document.getElementById("btnContinueAd").addEventListener("click", function () {
+  var btn = this; btn.disabled = true;
+  var ok = requestRewarded(function () { continueAfterAd(); });
+  if (!ok) { armCooldown(btn); /* ads unavailable: free Play Again stays available */ }
+  else setTimeout(function () { if (!adsHiddenForSession) btn.disabled = false; }, AD_COOLDOWN_MS);
+});
+document.getElementById("btnUndoAdOver").addEventListener("click", function () {
+  var btn = this; btn.disabled = true;
+  var ok = requestRewarded(function () { grantUndoBonus(); });
+  if (!ok) armCooldown(btn); else setTimeout(function () { if (!adsHiddenForSession) btn.disabled = false; }, AD_COOLDOWN_MS);
+});
+document.getElementById("btnUndoAdPause").addEventListener("click", function () {
+  var btn = this; btn.disabled = true;
+  var ok = requestRewarded(function () { grantUndoBonus(); });
+  if (!ok) armCooldown(btn); else setTimeout(function () { if (!adsHiddenForSession) btn.disabled = false; }, AD_COOLDOWN_MS);
+});
+
+/* ---------- Boot ---------- */
+function hideRewardedButtonsIfNoAds() {
+  // No SDK (offline / adblocker): rewarded buttons would do nothing.
+  if (CG.available) return;
+  hideRewardedButtons();
+}
+(async function boot() {
+  G.best = SAVE.best;
+  await CG.init();
+  await loadSave();
+  G.best = SAVE.best;
+  document.getElementById("menuBest").textContent = "Best score: " + SAVE.best + (SAVE.maxTile ? "  •  Best tile: " + SAVE.maxTile : "");
+  document.getElementById("menuBestScore").textContent = SAVE.best;
+  document.getElementById("menuBestTile").textContent = SAVE.maxTile;
+  document.getElementById("menuBestCombo").textContent = "×" + (SAVE.bestCombo || 0);
+  document.getElementById("menuStreak").textContent = "🔥 " + (SAVE.dailyStreak | 0) + "-day streak";
+  document.getElementById("menuCoins").textContent = SAVE.coins | 0;
+  document.getElementById("menuRank").textContent =
+    "Rank: " + rankForLevel(Math.max(1, SAVE.level)) + " — reach level " + (Math.max(1, SAVE.level) + 1) + " for the next rank!";
+  document.getElementById("hudBest").textContent = SAVE.best;
+  applyTheme(SAVE.theme || "midnight");
+  renderThemes();
+  checkDailyBonus();
+  document.getElementById("btnClaimDaily").addEventListener("click", claimDailyBonus);
+  hideRewardedButtonsIfNoAds();
+  updateSoundLabel(); updateHUD(); updatePreviews();
+  CG.loadingStop();
+})();
+
+// Test hooks (harmless in production): expose logic + state for verification.
+if (typeof window !== "undefined") {
+  window.__HexMergeTest = { findGroups: findGroups, resolveMerges: resolveMerges, applyGravity: applyGravity, emptyGrid: emptyGrid, lowestEmptyRow: lowestEmptyRow, isBoardFull: isBoardFull, maxTileOf: maxTileOf, cloneGrid: cloneGrid, neighbours: neighbours, scoreForMerge: scoreForMerge, starBonus: starBonus, shadeColor: shadeColor, easeOutBack: easeOutBack, STONE: STONE, WILD: WILD, stoneCountForLevel: stoneCountForLevel, THEMES: THEMES, themeById: themeById, unlockedThemeIds: unlockedThemeIds, isDailyAvailable: isDailyAvailable, dailyStreakOnClaim: dailyStreakOnClaim, dateStr: dateStr, undoTotal: undoTotal, placeStones: placeStones, applyTheme: applyTheme, renderThemes: renderThemes, checkDailyBonus: checkDailyBonus, claimDailyBonus: claimDailyBonus, hideRewardedButtons: hideRewardedButtons, orderForLevel: orderForLevel, applyOrderProgress: applyOrderProgress, nextOrder: nextOrder, useBomb: useBomb, clearLowestTiles: clearLowestTiles, rankForLevel: rankForLevel, starsForLevel: starsForLevel, coinsForMergeScore: coinsForMergeScore, showLevelResults: showLevelResults, continueLevel: continueLevel, G: G, SAVE: SAVE, dropTile: dropTile, startGame: startGame, endTutorial: endTutorial, Music: Music, AudioSys: AudioSys };
+}
+</script>
+</body>
+</html>
