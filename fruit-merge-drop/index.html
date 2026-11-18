@@ -1,0 +1,1156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Fruit Merge Drop</title>
+<!--
+  Fruit Merge Drop — original HTML5 physics merge game (Suika-style).
+  100% code-drawn (Canvas 2D + CSS), no images, no audio files, no
+  external resources. No SDK, no ads, no external URLs at all — the
+  file is fully self-contained. Plain vanilla JS, single file.
+
+  How to play: move the dropper, tap / click / Space to drop a fruit.
+  Two identical fruits that touch merge into the next, bigger fruit.
+  Chain merges quickly for a combo multiplier. Fill the score target
+  to clear the level; if the pile stays above the red danger line
+  for more than 1.5 seconds, the game is over.
+
+  Progression:
+    - 11 fruit tiers: cherry, strawberry, grape, orange, lemon,
+      apple, pear, peach, pineapple, melon, watermelon.
+    - Merge scores: 1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 66.
+    - Coins: 1 coin per merge + tier bonus; coins persist in the save.
+    - Levels: target score L1 = 100, then +50% per level
+      (150, 225, 338, ...). Each level drops a little faster.
+    - Combos: merges within 2s chain x2, x3, ... multipliers.
+    - Ranks by highest level: Rookie -> Pro -> Expert -> Master -> Legend.
+    - Daily bonus: claim once per day, streak grows the reward.
+    - Guided tutorial: 3 steps on the first game only.
+    - Sounds: tiny WebAudio oscillator beeps, mute toggle, no files.
+    - Save key: "fruitmerge_save_v1" (localStorage only, try/catch
+      guarded, JSON parse guarded).
+
+  Submission notes:
+    - Progress Save: Yes (localStorage only)
+    - Orientation: portrait-first, landscape letterboxed
+    - Category: Puzzle / Physics
+    - Language: English only. No fullscreen button, no preloader
+      blocking play, no cross-promotion, no external links.
+    - Size target: well under 1MB single file.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: #1a0b2e;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    color: #ffffff;
+    user-select: none;
+    -webkit-user-select: none;
+    overflow: hidden;
+  }
+  #wrap { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
+  #game {
+    position: relative;
+    width: min(100vw, 160vh);
+    height: min(100vh, 62.5vw);
+    aspect-ratio: 16 / 10;
+    max-width: 960px; max-height: 600px;
+    background: linear-gradient(180deg, #2b1150 0%, #1a0b2e 55%, #12081f 100%);
+    overflow: hidden;
+    border-radius: 6px;
+  }
+  #boardCanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: pointer; }
+  #hud {
+    position: absolute; top: 0; left: 0; right: 0; height: 62px;
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px;
+    background: rgba(18, 8, 31, 0.72);
+    border-bottom: 1px solid rgba(255,255,255,0.10);
+    z-index: 5;
+  }
+  .stat { min-width: 72px; }
+  .stat .lbl { font-size: 12px; letter-spacing: 1px; color: #c9a7e8; text-transform: uppercase; }
+  .stat .val { font-size: 20px; font-weight: 800; line-height: 1.1; }
+  #goalWrap { flex: 1; min-width: 120px; }
+  #goalText { font-size: 14px; color: #efe6ff; margin-bottom: 4px; }
+  #goalText b { color: #ffd166; }
+  #goalBar { height: 10px; background: #3a1d5e; border-radius: 6px; overflow: hidden; }
+  #goalFill { height: 100%; width: 0%; background: linear-gradient(90deg, #ff5e7a, #ffb347, #7CFC98); border-radius: 6px; transition: width 0.3s; }
+  .panel {
+    position: absolute; top: 84px; width: 170px; z-index: 5;
+    display: flex; flex-direction: column; gap: 10px; align-items: center;
+  }
+  #leftPanel { left: 14px; }
+  #rightPanel { right: 14px; }
+  .panelTitle { font-size: 12px; letter-spacing: 1px; color: #c9a7e8; text-transform: uppercase; }
+  #nextFruit {
+    width: 74px; height: 74px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 34px; font-weight: 800; color: #fff;
+    background: radial-gradient(circle at 35% 30%, #ff8fa3, #e63956 60%, #a3122b);
+    box-shadow: 0 4px 14px rgba(0,0,0,0.45), inset 0 -4px 8px rgba(0,0,0,0.25);
+  }
+  #nextFruitName { font-size: 14px; font-weight: 700; color: #ffe9f0; }
+  .btn {
+    font-family: inherit; font-size: 17px; font-weight: 800; color: #fff;
+    background: linear-gradient(180deg, #ff5e7a, #e63956);
+    border: none; border-radius: 12px; padding: 12px 22px; cursor: pointer;
+    box-shadow: 0 4px 0 #a3122b, 0 6px 14px rgba(0,0,0,0.35);
+  }
+  .btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #a3122b; }
+  .btn.blue { background: linear-gradient(180deg, #4aa8e0, #2b6cb0); box-shadow: 0 4px 0 #1c4a7a, 0 6px 14px rgba(0,0,0,0.35); }
+  .btn.blue:active { box-shadow: 0 1px 0 #1c4a7a; }
+  .btn.green { background: linear-gradient(180deg, #3ed6a4, #1f9d6d); box-shadow: 0 4px 0 #146b49, 0 6px 14px rgba(0,0,0,0.35); }
+  .btn.green:active { box-shadow: 0 1px 0 #146b49; }
+  .btn.ghost { background: rgba(255,255,255,0.12); box-shadow: 0 4px 0 rgba(0,0,0,0.35); }
+  .btn.ghost:active { box-shadow: 0 1px 0 rgba(0,0,0,0.35); }
+  .btn.small { font-size: 14px; padding: 9px 14px; width: 100%; }
+  .btn:disabled { opacity: 0.45; cursor: default; }
+  #comboBadge {
+    position: absolute; top: 74px; left: 50%; transform: translateX(-50%);
+    font-size: 26px; font-weight: 900; color: #ffd166;
+    text-shadow: 0 2px 0 rgba(0,0,0,0.5); z-index: 6; pointer-events: none;
+  }
+  #tutorialBar {
+    position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 10px; z-index: 7;
+    background: rgba(255,255,255,0.95); color: #2b1150;
+    border-radius: 14px; padding: 10px 14px; font-size: 15px; font-weight: 700;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.45); max-width: 92%;
+  }
+  #tutorialBar button {
+    font-family: inherit; font-size: 13px; font-weight: 800; cursor: pointer;
+    background: #e63956; color: #fff; border: none; border-radius: 8px; padding: 6px 10px;
+  }
+  #hintBar {
+    position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+    font-size: 13px; color: #d9c2f0; z-index: 4; pointer-events: none; white-space: nowrap;
+  }
+  .overlay {
+    position: absolute; inset: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(12, 5, 24, 0.78);
+  }
+  .card {
+    background: linear-gradient(180deg, #3a1d5e, #241040);
+    border: 2px solid rgba(255,255,255,0.15);
+    border-radius: 20px; padding: 26px 30px; text-align: center;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+    max-width: 560px; width: 92%; max-height: 92%; overflow-y: auto;
+  }
+  .card h1 { font-size: 40px; font-weight: 900; letter-spacing: 1px; margin-bottom: 4px;
+    background: linear-gradient(90deg, #ff5e7a, #ffb347, #7CFC98);
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .card h2 { font-size: 30px; font-weight: 900; margin-bottom: 8px; }
+  .card p { font-size: 15px; color: #d9c2f0; margin: 8px 0; line-height: 1.45; }
+  .card .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin: 14px 0; }
+  .chip { background: rgba(255,255,255,0.10); border-radius: 12px; padding: 10px 14px; min-width: 96px; }
+  .chip .lbl { font-size: 11px; letter-spacing: 1px; color: #c9a7e8; text-transform: uppercase; }
+  .chip .val { font-size: 19px; font-weight: 800; }
+  .bigScore { font-size: 52px; font-weight: 900; color: #ffd166; line-height: 1.1; }
+  #dailyBonus {
+    background: rgba(255, 209, 102, 0.14); border: 1px solid rgba(255, 209, 102, 0.5);
+    border-radius: 12px; padding: 10px 12px; margin: 12px 0;
+    display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;
+  }
+  .hidden { display: none !important; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  #boardCanvas:focus { outline: 3px solid #ffd166; outline-offset: -3px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="game">
+    <canvas id="boardCanvas" width="960" height="600" tabindex="0" aria-label="Fruit Merge Drop game board. Move the dropper and drop fruits to merge matching pairs."></canvas>
+    <div id="liveRegion" aria-live="polite" class="sr-only"></div>
+    <div id="hud">
+      <div class="stat"><div class="lbl">Score</div><div class="val" id="hudScore">0</div></div>
+      <div class="stat"><div class="lbl">Best</div><div class="val" id="hudBest">0</div></div>
+      <div class="stat"><div class="lbl">Level</div><div class="val" id="hudLevel">1</div></div>
+      <div class="stat"><div class="lbl">&#129689; Coins</div><div class="val" id="hudCoins">0</div></div>
+      <div id="goalWrap">
+        <div id="goalText">Goal: <b id="goalScore">100</b> pts &nbsp;&bull;&nbsp; Rank: <b id="goalRank">Rookie</b></div>
+        <div id="goalBar"><div id="goalFill"></div></div>
+      </div>
+    </div>
+    <div class="panel" id="leftPanel">
+      <div class="panelTitle">Next Fruit</div>
+      <div id="nextFruit">&#127826;</div>
+      <div id="nextFruitName">Cherry</div>
+      <div class="panelTitle" id="comboLabel">Combo: &times;1</div>
+    </div>
+    <div class="panel" id="rightPanel">
+      <button class="btn ghost small" id="btnPause" type="button">&#9208; Pause</button>
+      <button class="btn ghost small" id="btnRestart" type="button">&#8635; Restart</button>
+      <button class="btn ghost small" id="btnSound" type="button">&#128266; Sound: On</button>
+      <button class="btn ghost small" id="btnMenu" type="button">&#127968; Menu</button>
+    </div>
+    <div id="comboBadge"></div>
+    <div id="tutorialBar" class="hidden"><span id="tutorialText"></span><button id="btnSkipTutorial" type="button">Skip &times;</button></div>
+    <div id="hintBar">Move the dropper, tap to drop &mdash; match two same fruits to merge!</div>
+
+    <div class="overlay hidden" id="levelOverlay">
+      <div class="card">
+        <h2 id="levelResultTitle">LEVEL 1 COMPLETE!</h2>
+        <div class="bigScore" id="levelResultScore">+0</div>
+        <div class="row">
+          <div class="chip"><div class="lbl">Coins Earned</div><div class="val" id="levelResultCoins">+0</div></div>
+          <div class="chip"><div class="lbl">Level</div><div class="val" id="levelResultLevel">1</div></div>
+          <div class="chip"><div class="lbl">Best Combo</div><div class="val" id="levelResultCombo">&times;1</div></div>
+        </div>
+        <p id="levelResultNext"></p>
+        <button class="btn green" id="btnNextLevel" type="button">&#9654; Next Level</button>
+      </div>
+    </div>
+
+    <div class="overlay" id="menuOverlay">
+      <div class="card">
+        <h1>FRUIT MERGE DROP</h1>
+        <p>Drop fruits, merge matching pairs, grow the mighty Watermelon!</p>
+        <div id="dailyBonus" class="hidden">
+          <span id="dailyBonusText"></span>
+          <button class="btn blue" id="btnClaimDaily" type="button">&#127873; Claim Daily Bonus</button>
+        </div>
+        <div class="row">
+          <div class="chip"><div class="lbl">Best Score</div><div class="val" id="menuBestScore">0</div></div>
+          <div class="chip"><div class="lbl">Best Level</div><div class="val" id="menuBestLevel">1</div></div>
+          <div class="chip"><div class="lbl">Daily Streak</div><div class="val" id="menuStreak">&#128293; 0-day streak</div></div>
+          <div class="chip"><div class="lbl">&#129689; Coins</div><div class="val" id="menuCoins">0</div></div>
+        </div>
+        <p id="menuRank">Rank: Rookie &mdash; reach level 3 to become a Pro!</p>
+        <button class="btn" id="btnPlay" type="button">&#9654; Play</button>
+        <p id="menuBest" style="margin-top:12px;">Best score: 0</p>
+      </div>
+    </div>
+
+    <div class="overlay hidden" id="pauseOverlay">
+      <div class="card">
+        <h2>Paused</h2>
+        <div class="row">
+          <div class="chip"><div class="lbl">Score</div><div class="val" id="pauseScore">0</div></div>
+          <div class="chip"><div class="lbl">Level</div><div class="val" id="pauseLevel">1</div></div>
+          <div class="chip"><div class="lbl">Coins</div><div class="val" id="pauseCoins">0</div></div>
+        </div>
+        <button class="btn" id="btnResume" type="button">&#9654; Resume</button>
+        <button class="btn blue" id="btnRestartPause" type="button">&#8635; Restart</button>
+      </div>
+    </div>
+
+    <div class="overlay hidden" id="overOverlay">
+      <div class="card">
+        <h2>Game Over</h2>
+        <p>The fruit pile crossed the danger line!</p>
+        <div><span id="newBestBadge" class="hidden">&#9733; NEW BEST! &#9733;</span></div>
+        <div class="bigScore" id="finalScore">0</div>
+        <div class="row">
+          <div class="chip"><div class="lbl">Best</div><div class="val" id="finalBest">0</div></div>
+          <div class="chip"><div class="lbl">Coins Earned</div><div class="val" id="finalCoins">+0</div></div>
+          <div class="chip"><div class="lbl">Level</div><div class="val" id="finalLevel">1</div></div>
+          <div class="chip"><div class="lbl">Best Combo</div><div class="val" id="finalCombo">&times;1</div></div>
+        </div>
+        <button class="btn" id="btnPlayAgain" type="button">&#9654; Retry</button>
+        <button class="btn blue" id="btnMenuOver" type="button">&#127968; Menu</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+<script>
+"use strict";
+// __PURE_LOGIC_START__
+var FRUITS = [
+  { name: "Cherry",     emoji: "\uD83C\uDF52", color: "#e63956", dark: "#a3122b", light: "#ff8fa3", r: 12, score: 1 },
+  { name: "Strawberry", emoji: "\uD83C\uDF53", color: "#ff4d6d", dark: "#b3123a", light: "#ff9db0", r: 16, score: 3 },
+  { name: "Grape",      emoji: "\uD83C\uDF47", color: "#9b5de5", dark: "#5f2ea6", light: "#c39bf5", r: 20, score: 6 },
+  { name: "Orange",     emoji: "\uD83C\uDF4A", color: "#ff8c1a", dark: "#b35c00", light: "#ffb347", r: 25, score: 10 },
+  { name: "Lemon",      emoji: "\uD83C\uDF4B", color: "#ffd60a", dark: "#b89a00", light: "#ffe97a", r: 30, score: 15 },
+  { name: "Apple",      emoji: "\uD83C\uDF4E", color: "#ff3b30", dark: "#a3160e", light: "#ff8a80", r: 36, score: 21 },
+  { name: "Pear",       emoji: "\uD83C\uDF50", color: "#a8d94a", dark: "#5f8a1a", light: "#d4f08a", r: 42, score: 28 },
+  { name: "Peach",      emoji: "\uD83C\uDF51", color: "#ffb3a0", dark: "#d96a4e", light: "#ffd9cc", r: 48, score: 36 },
+  { name: "Pineapple",  emoji: "\uD83C\uDF4D", color: "#f4c542", dark: "#a67c00", light: "#ffe08a", r: 55, score: 45 },
+  { name: "Melon",      emoji: "\uD83C\uDF48", color: "#3ed6a4", dark: "#1a7a58", light: "#8df0cd", r: 63, score: 55 },
+  { name: "Watermelon", emoji: "\uD83C\uDF49", color: "#2fae4e", dark: "#166b2c", light: "#7CFC98", r: 72, score: 66 }
+];
+var GRAVITY = 1400;       // px / s^2
+var RESTITUTION = 0.25;   // wall / floor bounce
+var CONTAINER = { left: 330, right: 630, floor: 560, top: 110 };
+var DANGER_Y = 170;       // top of the pile must stay below this line
+var OVER_LIMIT_MS = 1500; // ms above the danger line before game over
+var COMBO_WINDOW_MS = 2000;
+var SAVE_KEY = "fruitmerge_save_v1";
+
+function fruitRadius(tier) { return FRUITS[tier].r; }
+function tierScore(tier) { return FRUITS[tier].score; }
+function fruitName(tier) { return FRUITS[tier].name; }
+// Coins: 1 per merge + the tier index as a bonus (cherry +0, watermelon +10).
+function coinsForMerge(tier) { return 1 + tier; }
+function levelTarget(level) {
+  if (level < 1) level = 1;
+  return Math.round(100 * Math.pow(1.5, level - 1));
+}
+// Seconds between drops; higher levels drop a little faster.
+function dropCooldown(level) {
+  if (level < 1) level = 1;
+  return Math.max(0.15, 0.45 - 0.03 * (level - 1));
+}
+// Seeded PRNG (mulberry32) — ALL gameplay randomness comes from this;
+// unseeded randomness is never used for gameplay. The seed lives in the save.
+function mulberry32(seed) {
+  var a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    var t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+// Next fruit is always one of the 5 smallest tiers (Suika-style).
+function nextFruitTierWith(rng) { return Math.floor(rng() * 5); }
+// Easing helpers for juice (pop / settle).
+function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+function easeOutBack(t) { var c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); }
+// Combo: a merge within COMBO_WINDOW_MS of the previous one chains +1.
+function comboMultiplier(lastMergeAtMs, nowMs, prevCombo) {
+  if (lastMergeAtMs === null || lastMergeAtMs === undefined) return 1;
+  if (nowMs - lastMergeAtMs <= COMBO_WINDOW_MS) return prevCombo + 1;
+  return 1;
+}
+function comboScore(baseScore, combo) { return baseScore * Math.max(1, combo); }
+function rankForLevel(level) {
+  if (level >= 12) return "Legend";
+  if (level >= 8) return "Master";
+  if (level >= 5) return "Expert";
+  if (level >= 3) return "Pro";
+  return "Rookie";
+}
+function dateStr(d) {
+  var m = d.getMonth() + 1, day = d.getDate();
+  return d.getFullYear() + "-" + (m < 10 ? "0" + m : "" + m) + "-" + (day < 10 ? "0" + day : "" + day);
+}
+function dateDiffDays(aStr, bStr) {
+  var a = new Date(aStr + "T00:00:00"), b = new Date(bStr + "T00:00:00");
+  return Math.round((b.getTime() - a.getTime()) / 86400000);
+}
+function isDailyAvailable(lastClaim, today) { return lastClaim !== today; }
+// Streak: claimed yesterday -> +1; claimed earlier (gap) -> restart at 1;
+// claimed today already -> unchanged.
+function dailyStreakOnClaim(lastClaim, today, streak) {
+  if (!lastClaim) return 1;
+  if (lastClaim === today) return streak;
+  if (dateDiffDays(lastClaim, today) === 1) return streak + 1;
+  return 1;
+}
+// Daily reward grows with the streak, capped at 100 coins.
+function dailyReward(streak) { return Math.min(100, 20 + 10 * (Math.max(1, streak) - 1)); }
+
+var _nextFruitId = 1;
+function makeFruit(tier, x, y) {
+  return { id: _nextFruitId++, tier: tier, x: x, y: y, vx: 0, vy: 0, r: FRUITS[tier].r, bornAt: 0 };
+}
+// Pairs of same-tier, touching fruits that should merge (greedy, no fruit twice).
+function findMergingPairs(fruits) {
+  var used = {}, pairs = [];
+  for (var i = 0; i < fruits.length; i++) {
+    if (used[fruits[i].id]) continue;
+    for (var j = i + 1; j < fruits.length; j++) {
+      if (used[fruits[j].id]) continue;
+      var a = fruits[i], b = fruits[j];
+      if (a.tier !== b.tier || a.tier >= FRUITS.length - 1) continue;
+      var dx = b.x - a.x, dy = b.y - a.y;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < a.r + b.r + 2) { pairs.push([a, b]); used[a.id] = true; used[b.id] = true; break; }
+    }
+  }
+  return pairs;
+}
+// One deterministic physics step. Mutates `fruits` in place, merges
+// touching same-tier pairs, returns the merge events of this step.
+function stepPhysics(fruits, dt, B) {
+  B = B || CONTAINER;
+  var events = [];
+  var i, j, f;
+  for (i = 0; i < fruits.length; i++) {
+    f = fruits[i];
+    f.vy += GRAVITY * dt;
+    f.x += f.vx * dt;
+    f.y += f.vy * dt;
+    if (f.x - f.r < B.left) { f.x = B.left + f.r; f.vx = Math.abs(f.vx) * RESTITUTION; }
+    if (f.x + f.r > B.right) { f.x = B.right - f.r; f.vx = -Math.abs(f.vx) * RESTITUTION; }
+    if (f.y + f.r > B.floor) {
+      f.y = B.floor - f.r;
+      f.vy = Math.abs(f.vy) > 40 ? -f.vy * RESTITUTION : 0;
+      f.vx *= 0.98;
+    }
+    if (f.y - f.r < B.top - 60) { f.y = B.top - 60 + f.r; if (f.vy < 0) f.vy = 0; }
+  }
+  // Pairwise circle collision: push apart + simple normal impulse.
+  for (i = 0; i < fruits.length; i++) {
+    for (j = i + 1; j < fruits.length; j++) {
+      var a = fruits[i], b = fruits[j];
+      var dx = b.x - a.x, dy = b.y - a.y;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      var minDist = a.r + b.r;
+      if (dist > 0 && dist < minDist) {
+        var nx = dx / dist, ny = dy / dist;
+        var overlap = (minDist - dist) / 2;
+        a.x -= nx * overlap; a.y -= ny * overlap;
+        b.x += nx * overlap; b.y += ny * overlap;
+        var rvx = b.vx - a.vx, rvy = b.vy - a.vy;
+        var vn = rvx * nx + rvy * ny;
+        if (vn < 0) {
+          var imp = -vn * 0.5;
+          a.vx -= nx * imp; a.vy -= ny * imp;
+          b.vx += nx * imp; b.vy += ny * imp;
+        }
+      } else if (dist === 0) {
+        a.x -= a.r / 2; b.x += b.r / 2;
+      }
+    }
+  }
+  // Rest pass: a fruit that is supported (floor, or another fruit below it)
+  // with a small velocity sleeps — otherwise a resting stack jitters
+  // forever, because the pairwise pass runs after the floor clamp and
+  // keeps pushing the bottom fruit down a fraction of a pixel per step.
+  for (i = 0; i < fruits.length; i++) {
+    var s = fruits[i];
+    if (s.y + s.r > B.floor - 1) {
+      s.y = B.floor - s.r;
+      if (Math.abs(s.vy) < 150) s.vy = 0;
+      s.vx *= 0.9;
+    } else {
+      for (j = 0; j < fruits.length; j++) {
+        if (j === i) continue;
+        var o = fruits[j];
+        if (o.y >= s.y) {
+          var sdx = o.x - s.x, sdy = o.y - s.y;
+          if (Math.sqrt(sdx * sdx + sdy * sdy) < s.r + o.r + 1 && Math.abs(s.vy) < 150) {
+            s.vy = 0; s.vx *= 0.9; break;
+          }
+        }
+      }
+    }
+    if (s.x - s.r < B.left) s.x = B.left + s.r;
+    if (s.x + s.r > B.right) s.x = B.right + s.r;
+  }
+  // Merges: touching same-tier pairs become the next tier at their midpoint.
+  var pairs = findMergingPairs(fruits);
+  for (i = 0; i < pairs.length; i++) {
+    var p = pairs[i];
+    var mx = (p[0].x + p[1].x) / 2, my = (p[0].y + p[1].y) / 2;
+    var newTier = p[0].tier + 1;
+    var idx0 = fruits.indexOf(p[0]), idx1 = fruits.indexOf(p[1]);
+    if (idx0 === -1 || idx1 === -1) continue;
+    fruits.splice(Math.max(idx0, idx1), 1);
+    fruits.splice(Math.min(idx0, idx1), 1);
+    var nf = makeFruit(newTier, mx, my);
+    nf.vx = (p[0].vx + p[1].vx) / 2;
+    nf.vy = (p[0].vy + p[1].vy) / 2;
+    fruits.push(nf);
+    events.push({ x: mx, y: my, oldTier: p[0].tier, newTier: newTier, score: tierScore(p[0].tier), coins: coinsForMerge(p[0].tier), fruit: nf });
+  }
+  return { events: events };
+}
+// Fruits whose top is above the danger line and nearly settled.
+function aboveDangerFruits(fruits, dangerY) {
+  dangerY = dangerY === undefined ? DANGER_Y : dangerY;
+  var out = [];
+  for (var i = 0; i < fruits.length; i++) {
+    var f = fruits[i];
+    if (f.y - f.r < dangerY && Math.abs(f.vy) < 120) out.push(f);
+  }
+  return out;
+}
+// True once the pile has been above the line continuously for OVER_LIMIT_MS.
+function isGameOverReady(aboveMs) { return aboveMs > OVER_LIMIT_MS; }
+function makeDefaultSave(seed) {
+  return { version: 1, seed: (typeof seed === "number" ? seed >>> 0 : 12345), coins: 0, best: 0, bestLevel: 1, lastClaim: "", dailyStreak: 0, tutorialSeen: false, muted: false };
+}
+// Migration ladder: v0 saves (no version field) gain version 1 + a seed;
+// unknown / wrong-typed fields are repaired by validateSave below.
+function migrateSave(o) {
+  if (!o || typeof o !== "object") return makeDefaultSave();
+  if (o.version === 1) return o;
+  var d = makeDefaultSave();
+  var keys = ["coins", "best", "bestLevel", "lastClaim", "dailyStreak", "tutorialSeen", "muted"];
+  for (var i = 0; i < keys.length; i++) { if (o[keys[i]] !== undefined) d[keys[i]] = o[keys[i]]; }
+  return d;
+}
+// Sanitise a parsed save (unknown / wrong-typed fields fall back to defaults).
+function validateSave(o) {
+  var m = migrateSave(o);
+  var d = makeDefaultSave();
+  if (typeof m.seed === "number") d.seed = m.seed >>> 0;
+  if (typeof m.coins === "number" && m.coins >= 0) d.coins = Math.floor(m.coins);
+  if (typeof m.best === "number" && m.best >= 0) d.best = Math.floor(m.best);
+  if (typeof m.bestLevel === "number" && m.bestLevel >= 1) d.bestLevel = Math.floor(m.bestLevel);
+  if (typeof m.lastClaim === "string") d.lastClaim = m.lastClaim;
+  if (typeof m.dailyStreak === "number" && m.dailyStreak >= 0) d.dailyStreak = Math.floor(m.dailyStreak);
+  if (typeof m.tutorialSeen === "boolean") d.tutorialSeen = m.tutorialSeen;
+  if (typeof m.muted === "boolean") d.muted = m.muted;
+  return d;
+}
+// Storage is injected as an argument so tests can pass a Map-backed fake.
+// All access is try/catch-guarded; failures return null / false, never throw.
+function loadSaveFrom(storage, key) {
+  try {
+    var raw = storage.getItem(key);
+    if (!raw) return null;
+    return validateSave(JSON.parse(raw));
+  } catch (e) { return null; }
+}
+function persistSaveTo(storage, key, save) {
+  try { storage.setItem(key, JSON.stringify(save)); return true; }
+  catch (e) { return false; }
+}
+// True when the board is stable: no touching same-tier pair and every
+// fruit is (nearly) at rest. Input stays locked until this is true.
+function isSettled(fruits) {
+  if (findMergingPairs(fruits).length > 0) return false;
+  for (var i = 0; i < fruits.length; i++) {
+    if (Math.sqrt(fruits[i].vx * fruits[i].vx + fruits[i].vy * fruits[i].vy) >= 80) return false;
+  }
+  return true;
+}
+// __PURE_LOGIC_END__
+
+var canvas = document.getElementById("boardCanvas");
+var ctx = canvas.getContext("2d");
+var DPR = 1;
+// Single uniform scale-to-fit: the 960x600 logical board is never stretched
+// independently on X/Y; the CSS letterboxes it. Backing store follows DPR.
+function resizeCanvas() {
+  DPR = (window.devicePixelRatio || 1);
+  canvas.width = 960 * DPR;
+  canvas.height = 600 * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+resizeCanvas();
+if (window.addEventListener) window.addEventListener("resize", resizeCanvas);
+// Reduced motion gates ALL shake / particles / flash / pop juice.
+var REDUCED = false;
+try { if (window.matchMedia) REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) { REDUCED = false; }
+// Visual-only jitter RNG (shake offsets) — separate from gameplay rng so
+// rendering never consumes gameplay randomness. No unseeded randomness anywhere.
+var vrng = mulberry32(987654321);
+
+function $(id) { return document.getElementById(id); }
+function show(el) { el.classList.remove("hidden"); }
+function hide(el) { el.classList.add("hidden"); }
+function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+var SAVE = makeDefaultSave();
+function genSeed() { return (Date.now() ^ 0x9e3779b9) >>> 0; }
+function loadSave() {
+  try {
+    var store = (typeof localStorage !== "undefined") ? localStorage : null;
+    var loaded = loadSaveFrom(store, SAVE_KEY);
+    SAVE = loaded || makeDefaultSave(genSeed());
+  } catch (e) { SAVE = makeDefaultSave(genSeed()); }
+}
+// Saves happen on meaningful events only (merge batch, level, game over,
+// daily claim, mute, tutorial done) — never every frame.
+function persistSave() {
+  try {
+    var store = (typeof localStorage !== "undefined") ? localStorage : null;
+    persistSaveTo(store, SAVE_KEY, SAVE);
+  } catch (e) {}
+}
+loadSave();
+var rng = mulberry32(SAVE.seed); // the ONLY source of gameplay randomness
+
+// ---- audio: tiny WebAudio oscillator beeps, no files ----
+var AudioSys = {
+  ctx: null,
+  ensure: function () {
+    if (SAVE.muted) return null;
+    try {
+      if (!this.ctx) {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        this.ctx = new AC();
+      }
+      if (this.ctx.state === "suspended") this.ctx.resume();
+      return this.ctx;
+    } catch (e) { return null; }
+  },
+  beep: function (freq, dur, type, vol) {
+    var ac = this.ensure();
+    if (!ac) return;
+    try {
+      var o = ac.createOscillator(), g = ac.createGain();
+      o.type = type || "sine"; o.frequency.value = freq;
+      g.gain.setValueAtTime(vol || 0.12, ac.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + (dur || 0.12));
+      o.connect(g); g.connect(ac.destination);
+      o.start(); o.stop(ac.currentTime + (dur || 0.12));
+    } catch (e) {}
+  },
+  drop: function () { this.beep(320, 0.08, "sine", 0.10); },
+  merge: function (tier) { this.beep(440 + tier * 40, 0.14, "triangle", 0.14); },
+  levelUp: function () { var self = this; this.beep(523, 0.12, "triangle", 0.14); setTimeout(function () { self.beep(659, 0.12, "triangle", 0.14); }, 110); setTimeout(function () { self.beep(784, 0.2, "triangle", 0.14); }, 220); },
+  over: function () { this.beep(196, 0.35, "sawtooth", 0.10); }
+};
+
+var audioUnlocked = false;
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  AudioSys.ensure();
+}
+
+// ---- scene machine: boot -> menu -> playing -> paused -> results ----
+// (results covers both the level-complete and game-over overlays,
+// distinguished by G.resultKind.) All overlay / side effects happen on
+// the transition boundary here, never per frame.
+var SCENES = ["boot", "menu", "playing", "paused", "results"];
+function announce(msg) { var lr = $("liveRegion"); if (lr) lr.textContent = msg; }
+function setScene(s, kind) {
+  G.state = s;
+  if (kind !== undefined) G.resultKind = kind;
+  window.__state = s;
+  if (s === "playing") {
+    hide($("menuOverlay")); hide($("overOverlay")); hide($("levelOverlay")); hide($("pauseOverlay"));
+    announce("Playing. Level " + G.level + ", goal " + levelTarget(G.level) + " points.");
+  } else if (s === "paused") {
+    $("pauseScore").textContent = String(G.score);
+    $("pauseLevel").textContent = String(G.level);
+    $("pauseCoins").textContent = String(SAVE.coins);
+    show($("pauseOverlay"));
+    announce("Paused.");
+  } else if (s === "menu") {
+    hide($("pauseOverlay")); hide($("overOverlay")); hide($("levelOverlay")); hide($("tutorialBar"));
+    show($("menuOverlay"));
+    updateMenu();
+    announce("Main menu.");
+  }
+}
+var G = {
+  state: "boot", // boot | menu | playing | paused | results
+  resultKind: "", // "level" | "over" while in results
+  fruits: [],
+  dropperX: 480,
+  current: 0,
+  next: 0,
+  score: 0,
+  level: 1,
+  moves: 0,
+  coinsEarned: 0,
+  combo: 1,
+  lastMergeAt: null,
+  bestCombo: 1,
+  overMs: 0,
+  lastDropAt: 0,
+  settling: false, // input locked while merges are settling
+  shake: 0,
+  tutorial: { active: false, step: 0 },
+  particles: [],
+  burst: [],
+  flashes: [],
+  dropCooldownUntil: 0,
+  spaceHeld: false,
+  escHeld: false
+};
+var TUTORIAL_STEPS = [
+  "Step 1 of 3: Move the dropper with your mouse, finger or arrow keys.",
+  "Step 2 of 3: Tap, click or press Space to drop the fruit.",
+  "Step 3 of 3: Match two of the SAME fruit — they merge into a bigger one!"
+];
+var lastFrameAt = 0;
+
+function updateHUD() {
+  $("hudScore").textContent = String(G.score);
+  $("hudBest").textContent = String(Math.max(SAVE.best, G.score));
+  $("hudLevel").textContent = String(G.level);
+  $("hudCoins").textContent = String(SAVE.coins);
+  $("goalScore").textContent = String(levelTarget(G.level));
+  $("goalRank").textContent = rankForLevel(Math.max(G.level, SAVE.bestLevel));
+  $("goalFill").style.width = clamp(Math.round(G.score / levelTarget(G.level) * 100), 0, 100) + "%";
+  var nf = FRUITS[G.next];
+  $("nextFruit").textContent = nf.emoji;
+  $("nextFruit").style.background = "radial-gradient(circle at 35% 30%, " + nf.light + ", " + nf.color + " 60%, " + nf.dark + ")";
+  $("nextFruitName").textContent = nf.name;
+  $("comboLabel").textContent = "Combo: \u00d7" + G.combo;
+  $("comboBadge").textContent = G.combo >= 2 ? "COMBO \u00d7" + G.combo + "!" : "";
+}
+function updateMenu() {
+  $("menuBestScore").textContent = String(SAVE.best);
+  $("menuBestLevel").textContent = String(SAVE.bestLevel);
+  $("menuCoins").textContent = String(SAVE.coins);
+  $("menuStreak").textContent = "\uD83D\uDD25 " + SAVE.dailyStreak + "-day streak";
+  $("menuBest").textContent = "Best score: " + SAVE.best;
+  var bestRank = rankForLevel(SAVE.bestLevel);
+  var nextRank = SAVE.bestLevel >= 12 ? "" : (" \u2014 reach level " + (SAVE.bestLevel < 3 ? 3 : (SAVE.bestLevel < 5 ? 5 : (SAVE.bestLevel < 8 ? 8 : 12))) + " to become a " + rankForLevel(SAVE.bestLevel < 3 ? 3 : (SAVE.bestLevel < 5 ? 5 : (SAVE.bestLevel < 8 ? 8 : 12))) + "!");
+  $("menuRank").textContent = "Rank: " + bestRank + nextRank;
+  checkDailyBonus();
+}
+function checkDailyBonus() {
+  var today = dateStr(new Date());
+  if (isDailyAvailable(SAVE.lastClaim, today)) {
+    var streak = dailyStreakOnClaim(SAVE.lastClaim, today, SAVE.dailyStreak);
+    $("dailyBonusText").textContent = "Daily bonus: +" + dailyReward(streak) + " coins (day " + streak + " streak)";
+    show($("dailyBonus"));
+  } else {
+    $("dailyBonusText").textContent = "Come back tomorrow for your next daily bonus!";
+    hide($("dailyBonus"));
+  }
+}
+function claimDailyBonus() {
+  var today = dateStr(new Date());
+  if (!isDailyAvailable(SAVE.lastClaim, today)) return false;
+  var streak = dailyStreakOnClaim(SAVE.lastClaim, today, SAVE.dailyStreak);
+  SAVE.dailyStreak = streak;
+  SAVE.lastClaim = today;
+  SAVE.coins += dailyReward(streak);
+  persistSave();
+  hide($("dailyBonus"));
+  updateMenu(); updateHUD();
+  return true;
+}
+function startTutorial() {
+  if (SAVE.tutorialSeen) { G.tutorial.active = false; hide($("tutorialBar")); return; }
+  G.tutorial.active = true; G.tutorial.step = 0;
+  $("tutorialText").textContent = TUTORIAL_STEPS[0];
+  show($("tutorialBar"));
+}
+function advanceTutorial(step) {
+  if (!G.tutorial.active) return;
+  if (step <= G.tutorial.step) {
+    G.tutorial.step = step + 1;
+    if (G.tutorial.step >= TUTORIAL_STEPS.length) { endTutorial(); return; }
+    $("tutorialText").textContent = TUTORIAL_STEPS[G.tutorial.step];
+  }
+}
+function endTutorial() {
+  G.tutorial.active = false;
+  hide($("tutorialBar"));
+  if (!SAVE.tutorialSeen) { SAVE.tutorialSeen = true; persistSave(); }
+}
+function startGame() {
+  G.fruits = [];
+  G.score = 0; G.level = 1; G.moves = 0; G.coinsEarned = 0;
+  G.combo = 1; G.lastMergeAt = null; G.bestCombo = 1;
+  G.overMs = 0; G.particles = []; G.burst = []; G.flashes = [];
+  G.settling = false; G.shake = 0;
+  G.dropperX = 480;
+  G.current = nextFruitTierWith(rng); G.next = nextFruitTierWith(rng);
+  setScene("playing");
+  startTutorial();
+  updateHUD();
+  lastFrameAt = 0; accumulatorMs = 0;
+}
+function spawnFruit(tier, x, y) {
+  var f = makeFruit(tier, x, y);
+  G.fruits.push(f);
+  return f;
+}
+// Drop the current fruit from the dropper. Validates legality first
+// (playing, not settling, cooldown) -> applies the spawn; merges resolve
+// deterministically inside stepGame; the board presents the result.
+// Returns false when the drop is not legal right now.
+function dropCurrent(nowMs) {
+  if (G.state !== "playing") return false;
+  if (G.settling) return false; // locked while merges are settling
+  var now = (nowMs === undefined ? Date.now() : nowMs);
+  if (now < G.dropCooldownUntil) return false;
+  G.dropCooldownUntil = now + dropCooldown(G.level) * 1000;
+  var r = FRUITS[G.current].r;
+  var x = clamp(G.dropperX, CONTAINER.left + r, CONTAINER.right - r);
+  spawnFruit(G.current, x, CONTAINER.top - 6);
+  G.settling = true;
+  G.moves++;
+  G.current = G.next;
+  G.next = nextFruitTierWith(rng);
+  AudioSys.drop();
+  advanceTutorial(1);
+  updateHUD();
+  return true;
+}
+function applyMergeEvents(events, nowMs) {
+  for (var i = 0; i < events.length; i++) {
+    var ev = events[i];
+    G.combo = comboMultiplier(G.lastMergeAt, nowMs, G.combo);
+    G.lastMergeAt = nowMs;
+    if (G.combo > G.bestCombo) G.bestCombo = G.combo;
+    var pts = comboScore(ev.score, G.combo);
+    G.score += pts;
+    var c = ev.coins;
+    SAVE.coins += c; G.coinsEarned += c;
+    G.particles.push({ x: ev.x, y: ev.y, text: "+" + pts, life: 900, born: nowMs });
+    // Juice, layered within ~100ms of the merge: sound + pop overshoot +
+    // particle burst + flash ring + score popup + tiny shake.
+    // Shake / burst / flash / pop are all gated behind prefers-reduced-motion.
+    AudioSys.merge(ev.newTier);
+    if (!REDUCED) {
+      if (ev.fruit) ev.fruit.pop = 1.45; // ease-out-back pop, decays in stepGame
+      G.flashes.push({ x: ev.x, y: ev.y, tier: ev.newTier, born: nowMs });
+      G.shake = Math.min(6, G.shake + 2 + ev.newTier * 0.3);
+      for (var b = 0; b < 8; b++) {
+        var ang = (b / 8) * Math.PI * 2 + ev.newTier;
+        G.burst.push({ x: ev.x, y: ev.y, vx: Math.cos(ang) * 160, vy: Math.sin(ang) * 160 - 40,
+          life: 450, born: nowMs, color: FRUITS[ev.newTier].color });
+      }
+    }
+    if (G.combo >= 2) announce("Combo times " + G.combo + "! Plus " + pts + " points.");
+    advanceTutorial(2);
+  }
+  if (events.length) { persistSave(); updateHUD(); checkLevelComplete(); }
+}
+function checkLevelComplete() {
+  if (G.state !== "playing") return;
+  if (G.score >= levelTarget(G.level)) showLevelResults();
+}
+function showLevelResults() {
+  var bonus = 50 * G.level;
+  G.score += bonus;
+  SAVE.bestLevel = Math.max(SAVE.bestLevel, G.level);
+  if (G.score > SAVE.best) SAVE.best = G.score;
+  persistSave();
+  setScene("results", "level");
+  $("levelResultTitle").textContent = "LEVEL " + G.level + " COMPLETE!";
+  $("levelResultScore").textContent = "+" + bonus + " bonus";
+  $("levelResultCoins").textContent = "+" + G.coinsEarned;
+  $("levelResultLevel").textContent = String(G.level);
+  $("levelResultCombo").textContent = "\u00d7" + G.bestCombo;
+  $("levelResultNext").textContent = "Next level goal: " + levelTarget(G.level + 1) + " points. Drops get a little faster!";
+  show($("levelOverlay"));
+  announce("Level " + G.level + " complete! Bonus plus " + bonus + " points.");
+  AudioSys.levelUp();
+  updateHUD();
+}
+function continueLevel() {
+  if (G.state !== "results" || G.resultKind !== "level") return;
+  G.level++;
+  SAVE.bestLevel = Math.max(SAVE.bestLevel, G.level);
+  persistSave();
+  hide($("levelOverlay"));
+  G.combo = 1; G.lastMergeAt = null;
+  setScene("playing");
+  updateHUD();
+  lastFrameAt = 0; accumulatorMs = 0;
+}
+function gameOver() {
+  var isNewBest = G.score > 0 && G.score >= SAVE.best;
+  if (G.score > SAVE.best) SAVE.best = G.score;
+  SAVE.bestLevel = Math.max(SAVE.bestLevel, G.level);
+  persistSave();
+  setScene("results", "over");
+  $("finalScore").textContent = String(G.score);
+  $("finalBest").textContent = String(SAVE.best);
+  $("finalCoins").textContent = "+" + G.coinsEarned;
+  $("finalLevel").textContent = String(G.level);
+  $("finalCombo").textContent = "\u00d7" + G.bestCombo;
+  if (isNewBest) show($("newBestBadge")); else hide($("newBestBadge"));
+  show($("overOverlay"));
+  announce("Game over. Final score " + G.score + ".");
+  AudioSys.over();
+  updateHUD();
+}
+// Keys live in a Set; update() reads them — handlers never act directly.
+var keysDown = new Set();
+function readKeys(dtMs) {
+  var dt = dtMs / 1000;
+  if (G.state === "playing") {
+    if (keysDown.has("ArrowLeft")) { G.dropperX = clamp(G.dropperX - 420 * dt, CONTAINER.left + 14, CONTAINER.right - 14); advanceTutorial(0); }
+    if (keysDown.has("ArrowRight")) { G.dropperX = clamp(G.dropperX + 420 * dt, CONTAINER.left + 14, CONTAINER.right - 14); advanceTutorial(0); }
+    if (keysDown.has(" ") || keysDown.has("Enter")) {
+      if (!G.spaceHeld) { G.spaceHeld = true; dropCurrent(); }
+    } else G.spaceHeld = false;
+    if (keysDown.has("Escape") || keysDown.has("p") || keysDown.has("P")) {
+      if (!G.escHeld) { G.escHeld = true; pauseGame(); }
+    } else G.escHeld = false;
+  } else if (G.state === "paused") {
+    if (keysDown.has("Escape") || keysDown.has("p") || keysDown.has("P")) {
+      if (!G.escHeld) { G.escHeld = true; resumeGame(); }
+    } else G.escHeld = false;
+  } else if (G.state === "menu" || G.state === "results") {
+    if (keysDown.has(" ") || keysDown.has("Enter")) {
+      if (!G.spaceHeld) { G.spaceHeld = true; startGame(); }
+    } else G.spaceHeld = false;
+  }
+}
+function stepGame(dtMs, nowMs) {
+  if (G.state !== "playing") return;
+  var now = (nowMs === undefined ? Date.now() : nowMs);
+  readKeys(dtMs); // input is read inside update, never in the handler
+  if (G.state !== "playing") return; // readKeys may have paused / restarted
+  var res = stepPhysics(G.fruits, dtMs / 1000, CONTAINER);
+  applyMergeEvents(res.events, now);
+  if (G.state !== "playing") return; // level-complete may have fired
+  // Combo decays once the window passes with no merge.
+  if (G.lastMergeAt !== null && now - G.lastMergeAt > COMBO_WINDOW_MS) G.combo = 1;
+  var above = aboveDangerFruits(G.fruits, DANGER_Y);
+  if (above.length > 0) {
+    G.overMs += dtMs;
+    if (isGameOverReady(G.overMs)) gameOver();
+  } else {
+    G.overMs = 0;
+  }
+  if (G.state !== "playing") return;
+  // Settle + juice decay: pop eases back to 1, burst particles fly, shake fades.
+  for (var q = 0; q < G.fruits.length; q++) {
+    var fr = G.fruits[q];
+    if (fr.pop && fr.pop > 1) fr.pop = 1 + (fr.pop - 1) * 0.86;
+    if (fr.pop && fr.pop < 1.01) fr.pop = 1;
+  }
+  var dtS = dtMs / 1000;
+  for (var b = 0; b < G.burst.length; b++) {
+    var bp = G.burst[b];
+    bp.x += bp.vx * dtS; bp.y += bp.vy * dtS; bp.vy += 500 * dtS;
+  }
+  if (G.shake > 0.3) G.shake *= 0.86; else G.shake = 0;
+  // Input unlocks only once the board is stable (no pending merges, at rest).
+  G.settling = !isSettled(G.fruits);
+  // Prune old particles / flashes / burst.
+  G.particles = G.particles.filter(function (p) { return now - p.born < p.life; });
+  G.flashes = G.flashes.filter(function (f) { return now - f.born < 500; });
+  G.burst = G.burst.filter(function (bp) { return now - bp.born < bp.life; });
+}
+// Fixed-timestep accumulator (60 Hz): frame delta is clamped to <=250 ms
+// BEFORE accumulating, so a tab-switch hitch can never spiral the sim.
+var STEP_MS = 1000 / 60;
+var accumulatorMs = 0;
+function loop(ts) {
+  if (!lastFrameAt) lastFrameAt = ts;
+  var frameMs = Math.min(250, ts - lastFrameAt);
+  lastFrameAt = ts;
+  if (G.state === "playing") {
+    accumulatorMs += frameMs;
+    while (accumulatorMs >= STEP_MS) {
+      accumulatorMs -= STEP_MS;
+      stepGame(STEP_MS, Date.now());
+      if (G.state !== "playing") break;
+    }
+  } else {
+    // Idle scenes still pump readKeys so Space/Enter can start a game
+    // and Escape can resume — keys are always read inside update.
+    accumulatorMs = 0;
+    readKeys(16);
+  }
+  render();
+  requestAnimationFrame(loop);
+}
+
+// ---- rendering (Canvas 2D, all art drawn in code) ----
+function drawFruit(f) {
+  var info = FRUITS[f.tier];
+  // Pop overshoot: merged fruits briefly draw larger, easing back to 1.
+  var pop = (f.pop && f.pop > 1) ? f.pop : 1;
+  ctx.save();
+  ctx.translate(f.x, f.y);
+  if (pop !== 1) ctx.scale(pop, pop);
+  ctx.translate(-f.x, -f.y);
+  var g = ctx.createRadialGradient(f.x - f.r * 0.35, f.y - f.r * 0.4, f.r * 0.1, f.x, f.y, f.r);
+  g.addColorStop(0, info.light);
+  g.addColorStop(0.55, info.color);
+  g.addColorStop(1, info.dark);
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "rgba(0,0,0,0.25)"; ctx.lineWidth = 2; ctx.stroke();
+  // highlight
+  ctx.fillStyle = "rgba(255,255,255,0.55)";
+  ctx.beginPath(); ctx.ellipse(f.x - f.r * 0.35, f.y - f.r * 0.45, f.r * 0.28, f.r * 0.16, -0.5, 0, Math.PI * 2); ctx.fill();
+  // leaf / stem for the small round fruits
+  if (f.tier <= 5 || f.tier === 8) {
+    ctx.fillStyle = "#2fae4e";
+    ctx.beginPath(); ctx.ellipse(f.x + f.r * 0.3, f.y - f.r * 0.95, f.r * 0.28, f.r * 0.12, 0.5, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "#7a4a21"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(f.x, f.y - f.r); ctx.lineTo(f.x + 2, f.y - f.r - 6); ctx.stroke();
+  }
+  // face
+  var er = Math.max(1.5, f.r * 0.09);
+  ctx.fillStyle = "#26221f";
+  ctx.beginPath(); ctx.arc(f.x - f.r * 0.32, f.y - f.r * 0.1, er, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(f.x + f.r * 0.32, f.y - f.r * 0.1, er, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#26221f"; ctx.lineWidth = Math.max(1.5, f.r * 0.08); ctx.lineCap = "round";
+  ctx.beginPath(); ctx.arc(f.x, f.y + f.r * 0.1, f.r * 0.3, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+  // watermelon stripes
+  if (f.tier === 10) {
+    ctx.strokeStyle = "rgba(22,107,44,0.55)"; ctx.lineWidth = 4;
+    for (var s = -1; s <= 1; s++) {
+      ctx.beginPath(); ctx.arc(f.x + s * f.r * 0.45, f.y, f.r * 0.55, -Math.PI * 0.4, Math.PI * 0.4); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+function render() {
+  // render() draws only — it never mutates game state (except shake decay
+  // visuals). Re-assert the DPR transform every frame.
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.save();
+  // Tiny gated shake (never >3 Hz flashing, disabled for reduced motion).
+  if (G.shake > 0.3 && !REDUCED) ctx.translate((vrng() - 0.5) * G.shake, (vrng() - 0.5) * G.shake);
+  // background
+  var bg = ctx.createLinearGradient(0, 0, 0, 600);
+  bg.addColorStop(0, "#2b1150"); bg.addColorStop(0.55, "#1a0b2e"); bg.addColorStop(1, "#12081f");
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, 960, 600);
+  // decorative dots
+  ctx.fillStyle = "rgba(255,255,255,0.06)";
+  for (var d = 0; d < 24; d++) {
+    var dx = (d * 137) % 960, dy = (d * 89) % 600;
+    ctx.beginPath(); ctx.arc(dx, dy, 3, 0, Math.PI * 2); ctx.fill();
+  }
+  // container
+  ctx.fillStyle = "rgba(255,255,255,0.07)";
+  ctx.fillRect(CONTAINER.left, CONTAINER.top, CONTAINER.right - CONTAINER.left, CONTAINER.floor - CONTAINER.top);
+  ctx.strokeStyle = "#ffd166"; ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(CONTAINER.left, CONTAINER.top);
+  ctx.lineTo(CONTAINER.left, CONTAINER.floor);
+  ctx.lineTo(CONTAINER.right, CONTAINER.floor);
+  ctx.lineTo(CONTAINER.right, CONTAINER.top);
+  ctx.stroke();
+  // danger line
+  ctx.strokeStyle = "#ff3b30"; ctx.lineWidth = 3; ctx.setLineDash([10, 8]);
+  ctx.beginPath(); ctx.moveTo(CONTAINER.left, DANGER_Y); ctx.lineTo(CONTAINER.right, DANGER_Y); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = "#ff8a80"; ctx.font = "bold 13px system-ui, sans-serif"; ctx.textAlign = "left";
+  ctx.fillText("DANGER", CONTAINER.left + 6, DANGER_Y - 6);
+  // dropper: guide line + current fruit preview
+  if (G.state === "playing" || G.state === "paused") {
+    var info = FRUITS[G.current];
+    ctx.strokeStyle = "rgba(255,255,255,0.25)"; ctx.lineWidth = 2; ctx.setLineDash([6, 6]);
+    ctx.beginPath(); ctx.moveTo(G.dropperX, CONTAINER.top - 34); ctx.lineTo(G.dropperX, CONTAINER.floor); ctx.stroke();
+    ctx.setLineDash([]);
+    var preview = { tier: G.current, x: G.dropperX, y: CONTAINER.top - 34, r: info.r, vx: 0, vy: 0 };
+    ctx.globalAlpha = 0.95;
+    drawFruit(preview);
+    ctx.globalAlpha = 1;
+    // dropper claw
+    ctx.fillStyle = "#ffd166";
+    ctx.beginPath(); ctx.moveTo(G.dropperX - 14, 66); ctx.lineTo(G.dropperX + 14, 66); ctx.lineTo(G.dropperX, 80); ctx.closePath(); ctx.fill();
+  }
+  // fruits
+  for (var i = 0; i < G.fruits.length; i++) drawFruit(G.fruits[i]);
+  // merge flashes
+  for (var j = 0; j < G.flashes.length; j++) {
+    var fl = G.flashes[j];
+    ctx.strokeStyle = "rgba(255,209,102,0.9)"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(fl.x, fl.y, FRUITS[fl.tier].r + 6, 0, Math.PI * 2); ctx.stroke();
+  }
+  // score popups
+  ctx.textAlign = "center";
+  for (var k = 0; k < G.particles.length; k++) {
+    var p = G.particles[k];
+    ctx.fillStyle = "#ffd166"; ctx.font = "bold 20px system-ui, sans-serif";
+    ctx.fillText(p.text, p.x, p.y - 10);
+  }
+  ctx.textAlign = "left";
+  // merge burst particles
+  for (var b2 = 0; b2 < G.burst.length; b2++) {
+    var bp = G.burst[b2];
+    ctx.fillStyle = bp.color;
+    ctx.beginPath(); ctx.arc(bp.x, bp.y, 4, 0, Math.PI * 2); ctx.fill();
+  }
+  // menu backdrop fruits when idle
+  if (G.state === "menu") {
+    ctx.fillStyle = "rgba(255,255,255,0.85)"; ctx.font = "bold 22px system-ui, sans-serif"; ctx.textAlign = "center";
+    ctx.fillText("Drop  •  Merge  •  Grow!", 480, 330);
+    ctx.textAlign = "left";
+  }
+  ctx.restore();
+}
+
+// ---- input: ONE Pointer Events stream (no separate mouse/touch) ----
+function canvasX(clientX) {
+  var rect = canvas.getBoundingClientRect();
+  return (clientX - rect.left) / rect.width * 960;
+}
+var pointerDown = false;
+canvas.addEventListener("pointerdown", function (e) {
+  unlockAudio(); // first gesture unlocks / resumes the AudioContext
+  if (canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (err) {} }
+  pointerDown = true;
+  if (G.state !== "playing") return;
+  G.dropperX = clamp(canvasX(e.clientX), CONTAINER.left + 14, CONTAINER.right - 14);
+  dropCurrent();
+});
+canvas.addEventListener("pointermove", function (e) {
+  if (G.state !== "playing") return;
+  G.dropperX = clamp(canvasX(e.clientX), CONTAINER.left + 14, CONTAINER.right - 14);
+  advanceTutorial(0);
+});
+canvas.addEventListener("pointerup", function () { pointerDown = false; });
+canvas.addEventListener("pointercancel", function () { pointerDown = false; });
+// Keys only fill a Set; update() (readKeys, called from stepGame) acts on it.
+document.addEventListener("keydown", function (e) {
+  unlockAudio();
+  if (e.key === " " || e.key === "ArrowLeft" || e.key === "ArrowRight") e.preventDefault();
+  keysDown.add(e.key);
+});
+document.addEventListener("keyup", function (e) { keysDown.delete(e.key); });
+// Auto-pause when the tab hides; reset the time baseline + accumulator
+// on return so no hitch leaks into the fixed timestep.
+document.addEventListener("visibilitychange", function () {
+  if (document.hidden) {
+    if (G.state === "playing") pauseGame();
+  } else {
+    lastFrameAt = 0; accumulatorMs = 0;
+  }
+});
+function pauseGame() {
+  if (G.state !== "playing") return;
+  setScene("paused");
+}
+function resumeGame() {
+  if (G.state !== "paused") return;
+  hide($("pauseOverlay"));
+  setScene("playing");
+  lastFrameAt = 0; accumulatorMs = 0;
+}
+function goMenu() {
+  setScene("menu");
+  updateHUD(); render();
+}
+function setMuted(m) {
+  SAVE.muted = m;
+  persistSave();
+  $("btnSound").textContent = m ? "\uD83D\uDD07 Sound: Off" : "\uD83D\uDD0A Sound: On";
+}
+
+// ---- wiring ----
+$("btnPlay").addEventListener("click", startGame);
+$("btnPlayAgain").addEventListener("click", startGame);
+$("btnNextLevel").addEventListener("click", continueLevel);
+$("btnPause").addEventListener("click", pauseGame);
+$("btnResume").addEventListener("click", resumeGame);
+$("btnRestart").addEventListener("click", startGame);
+$("btnRestartPause").addEventListener("click", function () { hide($("pauseOverlay")); startGame(); });
+$("btnMenu").addEventListener("click", goMenu);
+$("btnMenuOver").addEventListener("click", goMenu);
+$("btnSound").addEventListener("click", function () { setMuted(!SAVE.muted); });
+$("btnClaimDaily").addEventListener("click", claimDailyBonus);
+$("btnSkipTutorial").addEventListener("click", endTutorial);
+setMuted(SAVE.muted);
+updateMenu();
+updateHUD();
+render();
+setScene("menu"); // boot -> menu
+window.__gameReady = true;
+requestAnimationFrame(loop); // always-on: pumps update + render in every scene
+
+window.__FruitMergeTest = {
+  FRUITS: FRUITS, CONTAINER: CONTAINER, DANGER_Y: DANGER_Y, OVER_LIMIT_MS: OVER_LIMIT_MS,
+  SAVE_KEY: SAVE_KEY, GRAVITY: GRAVITY, SCENES: SCENES,
+  fruitRadius: fruitRadius, tierScore: tierScore, fruitName: fruitName,
+  coinsForMerge: coinsForMerge, levelTarget: levelTarget, dropCooldown: dropCooldown,
+  mulberry32: mulberry32, nextFruitTierWith: nextFruitTierWith,
+  easeOutCubic: easeOutCubic, easeOutBack: easeOutBack,
+  comboMultiplier: comboMultiplier, comboScore: comboScore,
+  rankForLevel: rankForLevel, dateStr: dateStr, dateDiffDays: dateDiffDays,
+  isDailyAvailable: isDailyAvailable, dailyStreakOnClaim: dailyStreakOnClaim, dailyReward: dailyReward,
+  makeFruit: makeFruit, stepPhysics: stepPhysics, findMergingPairs: findMergingPairs,
+  aboveDangerFruits: aboveDangerFruits, isGameOverReady: isGameOverReady, isSettled: isSettled,
+  makeDefaultSave: makeDefaultSave, validateSave: validateSave, migrateSave: migrateSave,
+  loadSaveFrom: loadSaveFrom, persistSaveTo: persistSaveTo,
+  G: G, SAVE: SAVE, keysDown: keysDown, rng: rng, startGame: startGame, dropCurrent: dropCurrent, spawnFruit: spawnFruit,
+  stepGame: stepGame, checkLevelComplete: checkLevelComplete, showLevelResults: showLevelResults,
+  continueLevel: continueLevel, gameOver: gameOver, claimDailyBonus: claimDailyBonus,
+  checkDailyBonus: checkDailyBonus, endTutorial: endTutorial, pauseGame: pauseGame,
+  resumeGame: resumeGame, goMenu: goMenu, setMuted: setMuted, updateHUD: updateHUD, updateMenu: updateMenu,
+  setScene: setScene, AudioSys: AudioSys
+};
+</script>
+</body>
+</html>
