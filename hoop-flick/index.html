@@ -1,0 +1,1043 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Hoop Flick — Flick the Ball, Swish the Hoop!</title>
+<!--
+  Hoop Flick — original HTML5 flick-shooting basketball game.
+  100% code-drawn (Canvas 2D + CSS), no images, no audio files, no
+  external resources at all. Single file, plain vanilla JS, no
+  frameworks, no SDK, no ads, no external URLs. Saves in localStorage
+  only, save key "hoopflick_save_v1".
+
+  How to play: the ball sits at the bottom-left. Drag back from the
+  ball (mouse or touch) and release — the drag vector sets the launch
+  velocity (opposite direction, longer drag = harder shot). A dotted
+  arc previews the trajectory while you drag. Score by dropping the
+  ball down through the rim. A clean swish (no rim or backboard touch)
+  pays +5 score and bonus coins. The hoop slides along its track and,
+  at higher levels, bobs up and down and gets smaller and faster.
+
+  Rounds: each level is a 60-second round. Reach the target makes to
+  advance (Level 1: 5 makes, +2 per level). Score = makes x 10 (+5 per
+  swish). Consecutive makes build a streak: 3+ = x2 coins, 5+ = x3.
+  Coins and ranks persist: Street Rookie -> Court Star -> Hoop Hero ->
+  Dunk Master -> Legend (by best round score). Daily bonus once a day,
+  reward grows with your claim streak. First game shows a 3-step
+  guided tutorial. Sounds are tiny WebAudio oscillator/noise blips
+  with a mute toggle. No audio files.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; background: #0d1030; overflow: hidden; }
+  body { font-family: "Trebuchet MS", "Segoe UI", Verdana, sans-serif; color: #fff;
+    display: flex; align-items: center; justify-content: center; }
+  #wrap { width: 100%; max-width: 960px; }
+  #game { position: relative; width: 100%; aspect-ratio: 960 / 600; max-height: 100vh;
+    margin: 0 auto; overflow: hidden; border-radius: 14px;
+    box-shadow: 0 18px 60px rgba(0,0,0,.6), 0 0 0 3px rgba(255,255,255,.08);
+    background: linear-gradient(180deg, #1b2a6b 0%, #27408f 34%, #c96a1e 34.5%, #8a4b12 100%); }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  canvas:focus-visible { outline: 3px solid #ffd166; outline-offset: -3px; }
+  #liveRegion { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .hidden { display: none !important; }
+
+  /* HUD */
+  #hud { position: absolute; top: 0; left: 0; right: 0; display: flex; gap: 8px;
+    padding: 10px 12px 0; pointer-events: none; z-index: 5; }
+  .stat { flex: 1; background: rgba(10,14,40,.72); border: 1px solid rgba(255,255,255,.18);
+    border-radius: 12px; padding: 5px 6px 6px; text-align: center; min-width: 0;
+    box-shadow: 0 4px 12px rgba(0,0,0,.35); }
+  .stat .lbl { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #ffd166; font-weight: 700; }
+  .stat .val { font-size: 22px; font-weight: 900; line-height: 1.1; white-space: nowrap; }
+  #timeWrap { flex: 1.6; }
+  #timeBar { height: 10px; background: rgba(255,255,255,.18); border-radius: 6px; margin-top: 6px; overflow: hidden; }
+  #timeFill { height: 100%; width: 100%; border-radius: 6px;
+    background: linear-gradient(90deg, #2ee6a8, #ffd166); transition: width .2s linear; }
+  #timeFill.low { background: linear-gradient(90deg, #ff5a5a, #ff9f43); }
+
+  /* side buttons */
+  #sideBtns { position: absolute; right: 10px; top: 74px; display: flex; flex-direction: column; gap: 8px; z-index: 6; }
+  .btn { font-family: inherit; font-weight: 800; color: #fff; border: none; cursor: pointer;
+    background: linear-gradient(180deg, #ff9f43, #f97b1e); border-radius: 12px;
+    padding: 12px 22px; font-size: 18px; letter-spacing: .02em;
+    box-shadow: 0 5px 0 #b85c0d, 0 8px 16px rgba(0,0,0,.35); text-shadow: 0 1px 2px rgba(0,0,0,.35); }
+  .btn:active { transform: translateY(4px); box-shadow: 0 1px 0 #b85c0d, 0 4px 8px rgba(0,0,0,.35); }
+  .btn.blue { background: linear-gradient(180deg, #4aa8e0, #2b7fc4); box-shadow: 0 5px 0 #1c5a8f, 0 8px 16px rgba(0,0,0,.35); }
+  .btn.blue:active { box-shadow: 0 1px 0 #1c5a8f, 0 4px 8px rgba(0,0,0,.35); }
+  .btn.green { background: linear-gradient(180deg, #3ed6a4, #1fae7d); box-shadow: 0 5px 0 #147a58, 0 8px 16px rgba(0,0,0,.35); }
+  .btn.green:active { box-shadow: 0 1px 0 #147a58, 0 4px 8px rgba(0,0,0,.35); }
+  .btn.ghost { background: rgba(10,14,40,.72); box-shadow: 0 4px 0 rgba(0,0,0,.4); border: 1px solid rgba(255,255,255,.25); }
+  .btn.small { padding: 8px 12px; font-size: 14px; border-radius: 10px; }
+  .btn:disabled { opacity: .45; cursor: default; transform: none; }
+
+  /* tutorial bar */
+  #tutorialBar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+    width: min(92%, 640px); background: rgba(10,14,40,.88); border: 2px solid #ffd166;
+    border-radius: 14px; padding: 12px 14px; z-index: 7; text-align: center;
+    box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+  #tutorialBar .step { font-size: 12px; color: #ffd166; font-weight: 800; letter-spacing: .15em; }
+  #tutorialText { font-size: 18px; font-weight: 700; margin: 4px 0 10px; line-height: 1.35; }
+  #tutorialBar .dots { font-size: 20px; letter-spacing: 6px; color: #ffd166; }
+
+  /* overlays */
+  .overlay { position: absolute; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+    background: rgba(8,10,32,.72); backdrop-filter: blur(2px); padding: 16px; }
+  .card { width: min(94%, 560px); max-height: 96%; overflow-y: auto; text-align: center;
+    background: linear-gradient(180deg, #232a5e, #141a3d); border: 2px solid rgba(255,255,255,.16);
+    border-radius: 20px; padding: 22px 22px 26px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+  .card h1 { font-size: 44px; font-weight: 900; letter-spacing: .02em; line-height: 1;
+    background: linear-gradient(180deg, #ffe29a, #ff9f43); -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: 0 4px 0 rgba(0,0,0,.15); }
+  .card h2 { font-size: 32px; font-weight: 900; margin-bottom: 6px; }
+  .card .sub { color: #cfd6ff; font-size: 16px; margin: 8px 0 14px; line-height: 1.45; }
+  .ballEmoji { font-size: 52px; line-height: 1; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 14px 0; }
+  .chip { background: rgba(255,255,255,.09); border: 1px solid rgba(255,255,255,.16); border-radius: 12px; padding: 8px 12px; min-width: 96px; }
+  .chip .lbl { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #ffd166; font-weight: 700; }
+  .chip .val { font-size: 20px; font-weight: 900; }
+  .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 16px; }
+  #dailyBonus { margin: 14px auto 0; max-width: 420px; background: linear-gradient(180deg, #3a2a10, #2a1f08);
+    border: 2px solid #ffd166; border-radius: 14px; padding: 12px; }
+  #dailyBonusText { font-weight: 800; font-size: 16px; margin-bottom: 10px; }
+  #menuBest { color: #cfd6ff; font-size: 14px; }
+  #menuRank { font-size: 17px; font-weight: 800; color: #ffd166; margin-top: 6px; }
+  .bigScore { font-size: 56px; font-weight: 900; line-height: 1; color: #ffd166;
+    text-shadow: 0 4px 0 rgba(0,0,0,.3); margin: 6px 0; }
+  #newBestBadge { display: inline-block; background: linear-gradient(180deg, #ffe29a, #ffb347); color: #5a2d00;
+    font-weight: 900; border-radius: 999px; padding: 6px 16px; font-size: 16px; margin: 6px 0;
+    box-shadow: 0 4px 14px rgba(255,180,60,.5); animation: pop .5s ease; }
+  @keyframes pop { 0% { transform: scale(.5); } 60% { transform: scale(1.15); } 100% { transform: scale(1); } }
+  .statsGrid { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 12px 0 4px; }
+  .note { font-size: 13px; color: #9aa5d6; margin-top: 12px; line-height: 1.5; }
+  #streakBadge { position: absolute; left: 12px; top: 74px; z-index: 6; font-size: 18px; font-weight: 900;
+    background: rgba(10,14,40,.72); border: 1px solid rgba(255,209,102,.6); color: #ffd166;
+    border-radius: 999px; padding: 6px 14px; pointer-events: none; box-shadow: 0 4px 12px rgba(0,0,0,.35); }
+  @media (max-width: 640px) {
+    .card h1 { font-size: 34px; } .card h2 { font-size: 26px; }
+    .stat .val { font-size: 17px; } .stat .lbl { font-size: 9px; }
+    .btn { font-size: 16px; padding: 11px 18px; }
+    #tutorialText { font-size: 15px; }
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="game">
+    <canvas id="boardCanvas" width="960" height="600" tabindex="0" aria-label="Hoop Flick game court. Drag back from the ball and release to shoot."></canvas>
+    <div id="liveRegion" aria-live="polite"></div>
+
+    <div id="hud">
+      <div class="stat"><div class="lbl">Score</div><div class="val" id="hudScore">0</div></div>
+      <div class="stat"><div class="lbl">Best</div><div class="val" id="hudBest">0</div></div>
+      <div class="stat"><div class="lbl">Level</div><div class="val" id="hudLevel">1</div></div>
+      <div class="stat"><div class="lbl">Makes <span id="hudTarget">/ 5</span></div><div class="val" id="hudMakes">0</div></div>
+      <div class="stat"><div class="lbl">&#129689; Coins</div><div class="val" id="hudCoins">0</div></div>
+      <div class="stat" id="timeWrap"><div class="lbl">Time <span id="timeText">60</span>s</div><div id="timeBar"><div id="timeFill"></div></div></div>
+    </div>
+
+    <div id="streakBadge" class="hidden">&#128293; Streak x2</div>
+
+    <div id="sideBtns">
+      <button class="btn ghost small" id="btnPause" type="button">&#9208; Pause</button>
+      <button class="btn ghost small" id="btnSound" type="button">&#128266; Sound: On</button>
+      <button class="btn ghost small" id="btnRestart" type="button">&#8635; Restart</button>
+    </div>
+
+    <div id="tutorialBar" class="hidden">
+      <div class="step" id="tutorialStep">STEP 1 OF 3</div>
+      <div id="tutorialText"></div>
+      <div class="dots" id="tutorialDots">&#9679;&#9675;&#9675;</div>
+      <button class="btn blue small" id="btnSkipTutorial" type="button" style="margin-top:8px;">Skip &#10005;</button>
+    </div>
+
+    <div class="overlay" id="menuOverlay">
+      <div class="card">
+        <div class="ballEmoji">&#127936;</div>
+        <h1>HOOP FLICK</h1>
+        <p class="sub">Drag back from the ball, release, and swish it through the hoop!
+        Beat the 60-second clock, build a streak, and climb from Street Rookie to Legend.</p>
+        <div id="dailyBonus" class="hidden">
+          <div id="dailyBonusText"></div>
+          <button class="btn green" id="btnClaimDaily" type="button">&#127873; Claim Daily Bonus</button>
+        </div>
+        <div class="chips">
+          <div class="chip"><div class="lbl">Best Score</div><div class="val" id="menuBestScore">0</div></div>
+          <div class="chip"><div class="lbl">Best Level</div><div class="val" id="menuBestLevel">1</div></div>
+          <div class="chip"><div class="lbl">Daily Streak</div><div class="val" id="menuStreak">&#128293; 0-day</div></div>
+          <div class="chip"><div class="lbl">&#129689; Coins</div><div class="val" id="menuCoins">0</div></div>
+        </div>
+        <p id="menuRank">Rank: Street Rookie</p>
+        <div class="row"><button class="btn" id="btnPlay" type="button">&#9654; Play</button></div>
+        <p id="menuBest">Best score: 0</p>
+        <p class="note">Tip: a clean swish (no rim, no backboard) pays +5 score and bonus coins.
+        Streak 3+ = x2 coins, streak 5+ = x3 coins. The hoop slides — and at higher levels it bobs and shrinks!</p>
+      </div>
+    </div>
+
+    <div class="overlay hidden" id="pauseOverlay">
+      <div class="card">
+        <h2>Paused</h2>
+        <p class="sub">Take a breather — the clock is stopped.</p>
+        <div class="chips">
+          <div class="chip"><div class="lbl">Score</div><div class="val" id="pauseScore">0</div></div>
+          <div class="chip"><div class="lbl">Level</div><div class="val" id="pauseLevel">1</div></div>
+          <div class="chip"><div class="lbl">Makes</div><div class="val" id="pauseMakes">0</div></div>
+        </div>
+        <div class="row">
+          <button class="btn" id="btnResume" type="button">&#9654; Resume</button>
+          <button class="btn blue" id="btnRestartPause" type="button">&#8635; Restart</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="overlay hidden" id="resultsOverlay">
+      <div class="card">
+        <h2 id="resultsTitle">Time's Up!</h2>
+        <div><span id="newBestBadge" class="hidden">&#9733; NEW BEST! &#9733;</span></div>
+        <div class="bigScore" id="finalScore">0</div>
+        <p class="sub" id="resultsSub"></p>
+        <div class="statsGrid">
+          <div class="chip"><div class="lbl">Makes</div><div class="val" id="finalMakes">0</div></div>
+          <div class="chip"><div class="lbl">Misses</div><div class="val" id="finalMisses">0</div></div>
+          <div class="chip"><div class="lbl">Best Streak</div><div class="val" id="finalBestStreak">0</div></div>
+          <div class="chip"><div class="lbl">Coins Earned</div><div class="val" id="finalCoins">+0</div></div>
+          <div class="chip"><div class="lbl">Level Reached</div><div class="val" id="finalLevel">1</div></div>
+          <div class="chip"><div class="lbl">Best Score</div><div class="val" id="finalBest">0</div></div>
+        </div>
+        <p id="menuRank2" style="font-weight:800;color:#ffd166;margin-top:8px;"></p>
+        <div class="row">
+          <button class="btn" id="btnRetry" type="button">&#8635; Retry</button>
+          <button class="btn green hidden" id="btnNextLevel" type="button">Next Level &#9654;</button>
+          <button class="btn blue" id="btnMenu" type="button">Menu</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+"use strict";
+// __PURE_LOGIC_START__
+var SAVE_KEY = "hoopflick_save_v1";
+var GRAVITY = 1400;        // px / s^2
+var ROUND_TIME = 60;        // seconds per level round
+var BALL_R = 22;            // ball radius px
+var BALL_START_X = 180;
+var BALL_START_Y = 500;
+var FLOOR_Y = 560;          // court floor line
+var MAX_SPEED = 1500;       // launch speed clamp px/s
+var DRAG_POWER = 3.0;       // drag px -> launch velocity scale
+var RANKS = [
+  { min: 0, name: "Street Rookie" },
+  { min: 50, name: "Court Star" },
+  { min: 150, name: "Hoop Hero" },
+  { min: 300, name: "Dunk Master" },
+  { min: 500, name: "Legend" }
+];
+
+function dateStr(d) {
+  var m = d.getMonth() + 1, day = d.getDate();
+  return d.getFullYear() + "-" + (m < 10 ? "0" + m : "" + m) + "-" + (day < 10 ? "0" + day : "" + day);
+}
+function defaultSave() {
+  // v: save-schema version (migration ladder in loadSave). seed: PRNG seed,
+  // generated once from the clock — all gameplay randomness derives from it.
+  return { v: 1, seed: ((Date.now() % 2147483646) + 1), coins: 0, best: 0, bestLevel: 1,
+           level: 1, dailyLast: "", dailyStreak: 0, tutorialSeen: false, muted: false };
+}
+// Seeded PRNG (mulberry32) — ALL gameplay randomness comes from this, never Math.random().
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+// store: optional storage object ({getItem,setItem}); defaults to localStorage.
+// Tests inject a Map-backed fake; every access is try/catch-guarded.
+function loadSave(store) {
+  var s = defaultSave();
+  try {
+    var st = store || (typeof localStorage !== "undefined" ? localStorage : null);
+    if (!st) return s;
+    var raw = st.getItem(SAVE_KEY);
+    if (!raw) return s;
+    var p = JSON.parse(raw);
+    if (!p || typeof p !== "object") return s;
+    // migration ladder: v0 (no version field) -> v1: keep the fields, stamp v:1.
+    if (typeof p.v !== "number") p.v = 1;
+    if (typeof p.seed === "number" && p.seed > 0) s.seed = Math.floor(p.seed);
+    if (typeof p.coins === "number") s.coins = Math.max(0, Math.floor(p.coins));
+    if (typeof p.best === "number") s.best = Math.max(0, Math.floor(p.best));
+    if (typeof p.bestLevel === "number") s.bestLevel = Math.max(1, Math.floor(p.bestLevel));
+    if (typeof p.level === "number") s.level = Math.max(1, Math.floor(p.level));
+    if (typeof p.dailyLast === "string") s.dailyLast = p.dailyLast;
+    if (typeof p.dailyStreak === "number") s.dailyStreak = Math.max(0, Math.floor(p.dailyStreak));
+    if (typeof p.tutorialSeen === "boolean") s.tutorialSeen = p.tutorialSeen;
+    if (typeof p.muted === "boolean") s.muted = p.muted;
+  } catch (e) { /* corrupted save -> defaults */ }
+  return s;
+}
+function saveSave(s, store) {
+  try {
+    var st = store || (typeof localStorage !== "undefined" ? localStorage : null);
+    if (!st) return false;
+    st.setItem(SAVE_KEY, JSON.stringify(s));
+    return true;
+  } catch (e) { return false; }
+}
+
+// --- drag -> launch velocity (pull back, ball flies the opposite way) ---
+function clampVelocity(vx, vy, max) {
+  var sp = Math.hypot(vx, vy);
+  if (sp <= max) return { vx: vx, vy: vy };
+  var k = max / sp;
+  return { vx: vx * k, vy: vy * k };
+}
+function dragToVelocity(sx, sy, ex, ey) {
+  var vx = (sx - ex) * DRAG_POWER;
+  var vy = (sy - ey) * DRAG_POWER;
+  var v = clampVelocity(vx, vy, MAX_SPEED);
+  // angle limit (slingshot rule): a shot must travel upward — a flat or
+  // downward flick is clamped to a shallow upward launch, never a dud.
+  if (v.vy > -80) v.vy = -80;
+  return v;
+}
+function dragLength(sx, sy, ex, ey) { return Math.hypot(ex - sx, ey - sy); }
+
+// --- trajectory preview: pure gravity, no collisions ---
+function simulateTrajectory(x, y, vx, vy, steps, dt) {
+  var pts = [], px = x, py = y, pvx = vx, pvy = vy;
+  for (var i = 0; i < steps; i++) {
+    pvy += GRAVITY * dt;
+    px += pvx * dt; py += pvy * dt;
+    pts.push({ x: px, y: py });
+    if (py > FLOOR_Y) break;
+  }
+  return pts;
+}
+
+// --- level tuning ---
+function targetMakes(level) { return 5 + 2 * (level - 1); }
+function rimHalfForLevel(level) { return Math.max(36, 58 - 3 * (level - 1)); }
+function hoopPosition(level, t, phase) {
+  var ph = phase || 0;
+  var amp = level <= 1 ? 40 : Math.min(120, 40 + 20 * (level - 1));
+  var omega = 0.5 + 0.12 * (level - 1);
+  var bob = level >= 3 ? Math.min(45, 15 * (level - 2)) : 0;
+  return { x: 760 + amp * Math.sin(t * omega + ph), y: 210 + bob * Math.sin(t * 1.4 + ph),
+           rimHalf: rimHalfForLevel(level) };
+}
+
+// --- scoring / coins / ranks ---
+function streakMultiplier(streak) {
+  if (streak >= 5) return 3;
+  if (streak >= 3) return 2;
+  return 1;
+}
+function coinsForMake(streak, swish) {
+  return (10 + (swish ? 5 : 0)) * streakMultiplier(streak);
+}
+function scoreForMake(swish) { return 10 + (swish ? 5 : 0); }
+function rankForScore(score) {
+  var name = RANKS[0].name;
+  for (var i = 0; i < RANKS.length; i++) if (score >= RANKS[i].min) name = RANKS[i].name;
+  return name;
+}
+function levelReached(makes, level) { return makes >= targetMakes(level); }
+
+// --- daily bonus ---
+function isDailyAvailable(lastClaim, today) { return lastClaim !== today; }
+function dailyStreakOnClaim(lastClaim, today, yesterday, streak) {
+  if (lastClaim === today) return streak;
+  if (lastClaim === yesterday) return streak + 1;
+  return 1;
+}
+function dailyReward(streak) { return Math.min(500, 100 * Math.max(1, streak)); }
+
+// --- one physics step for the ball; mutates ball, returns events ---
+function stepBall(ball, hoop, dt) {
+  var ev = { scored: false, swish: false, rimHit: false, boardHit: false, bounced: false, landed: false };
+  var prevY = ball.y;
+  ball.vy += GRAVITY * dt;
+  ball.x += ball.vx * dt;
+  ball.y += ball.vy * dt;
+  // score: crossing the rim plane downward, between the posts
+  if (!ball.scored && ball.vy > 0 && prevY < hoop.y && ball.y >= hoop.y &&
+      Math.abs(ball.x - hoop.x) < hoop.rimHalf - 6) {
+    ball.scored = true;
+    ev.scored = true;
+    ev.swish = !ball.rimTouched && !ball.boardTouched;
+  }
+  if (!ball.scored) {
+    // rim posts (two small circles at the rim ends)
+    var posts = [hoop.x - hoop.rimHalf, hoop.x + hoop.rimHalf];
+    for (var i = 0; i < posts.length; i++) {
+      var dx = ball.x - posts[i], dy = ball.y - hoop.y;
+      var d = Math.hypot(dx, dy), min = ball.r + 5;
+      if (d < min && d > 0.0001) {
+        var nx = dx / d, ny = dy / d;
+        ball.x = posts[i] + nx * min;
+        ball.y = hoop.y + ny * min;
+        var vn = ball.vx * nx + ball.vy * ny;
+        if (vn < 0) { ball.vx -= 1.55 * vn * nx; ball.vy -= 1.55 * vn * ny; }
+        ball.rimTouched = true;
+        ev.rimHit = true;
+      }
+    }
+    // backboard: vertical board just right of the rim
+    var bx = hoop.x + hoop.rimHalf + 16;
+    if (ball.vx > 0 && ball.x + ball.r > bx && ball.x < bx &&
+        ball.y > hoop.y - 75 - ball.r && ball.y < hoop.y + 5 + ball.r) {
+      ball.x = bx - ball.r;
+      ball.vx = -ball.vx * 0.55;
+      ball.boardTouched = true;
+      ev.boardHit = true;
+    }
+  }
+  // side walls
+  if (ball.x - ball.r < 0) { ball.x = ball.r; ball.vx = Math.abs(ball.vx) * 0.5; }
+  if (ball.x + ball.r > 960) { ball.x = 960 - ball.r; ball.vx = -Math.abs(ball.vx) * 0.5; }
+  // floor
+  if (ball.y + ball.r > FLOOR_Y) {
+    ball.y = FLOOR_Y - ball.r;
+    if (ball.vy > 0) {
+      if (Math.abs(ball.vy) < 90) { ball.vy = 0; ball.landed = true; ev.landed = true; }
+      else { ball.vy = -ball.vy * 0.45; ball.vx *= 0.85; ev.bounced = true; }
+    }
+    if (ball.landed) {
+      ball.vx *= Math.max(0, 1 - 3 * dt);
+      if (Math.abs(ball.vx) < 15) ball.vx = 0;
+    }
+  }
+  return ev;
+}
+// __PURE_LOGIC_END__
+
+// ================= game (DOM + render + input) =================
+var canvas = document.getElementById("boardCanvas");
+var ctx = canvas.getContext("2d");
+// DPR backing store + setTransform; single uniform logical space 960x600,
+// letterboxed by the CSS aspect-ratio container (never independent X/Y scale).
+function resizeCanvas() {
+  var dpr = (window.devicePixelRatio || 1);
+  canvas.width = Math.round(960 * dpr);
+  canvas.height = Math.round(600 * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+resizeCanvas();
+if (window.addEventListener) window.addEventListener("resize", resizeCanvas);
+
+// prefers-reduced-motion gates ALL shake/particles/flash (juice is opt-in).
+var REDUCED_MOTION = false;
+try {
+  REDUCED_MOTION = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+} catch (e) { REDUCED_MOTION = false; }
+
+var SAVE = loadSave();
+// scene machine: single string, boot -> menu -> playing -> paused -> results.
+// Side effects happen on the boundary (setState), never per frame.
+function setState(s) {
+  G.state = s;
+  try { window.__state = s; } catch (e) {}
+}
+try { window.__state = "menu"; } catch (e) {}
+
+var G = {
+  state: "menu",           // menu | playing | paused | results
+  level: 1,
+  score: 0, makes: 0, misses: 0, streak: 0, bestStreak: 0,
+  coinsEarned: 0, timeLeft: ROUND_TIME, hoopT: 0, resetIn: 0,
+  ball: { x: BALL_START_X, y: BALL_START_Y, vx: 0, vy: 0, r: BALL_R,
+          rimTouched: false, boardTouched: false, scored: false, landed: false, flying: false },
+  hoop: { x: 760, y: 210, rimHalf: 58 },
+  dragging: false, dragSX: 0, dragSY: 0, dragX: 0, dragY: 0,
+  tutorial: { active: false, step: 0 },
+  popups: [], netSway: 0, netSwayT: 0, shots: 0,
+  particles: [], hoopPhase: 0, rng: mulberry32(SAVE.seed)
+};
+var TUT_STEPS = [
+  "Drag BACK from the ball — pull down and away, like pulling a slingshot.",
+  "Release to shoot! The longer the drag, the harder the shot. Watch the dotted arc.",
+  "Aim for the hoop — drop the ball down through the rim. A clean swish pays extra!"
+];
+
+function $(id) { return document.getElementById(id); }
+function show(el, on) { el.classList.toggle("hidden", !on); }
+function announce(text) { var lr = $("liveRegion"); if (lr) lr.textContent = text; }
+// juice particles (gated behind prefers-reduced-motion); seeded RNG only.
+function spawnBurst(x, y, color, n) {
+  if (REDUCED_MOTION) return;
+  for (var i = 0; i < n; i++) {
+    var a = G.rng() * Math.PI * 2, sp = 60 + G.rng() * 220;
+    G.particles.push({ x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 80,
+                       life: 0.5 + G.rng() * 0.4, max: 0.9, color: color, r: 3 + G.rng() * 4 });
+  }
+}
+
+// ---------- audio (tiny WebAudio blips, no files) ----------
+var AudioSys = {
+  ctx: null, enabled: true,
+  ensure: function () {
+    if (this.ctx) return this.ctx;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      this.ctx = new AC();
+    } catch (e) { this.ctx = null; }
+    return this.ctx;
+  },
+  unlock: function () {
+    var ac = this.ensure(); if (!ac) return;
+    try { if (ac.state === "suspended") ac.resume(); } catch (e) {}
+  },
+  tone: function (freq, dur, type, vol, slideTo) {
+    if (SAVE.muted) return;
+    var ac = this.ensure(); if (!ac) return;
+    try {
+      var o = ac.createOscillator(), g = ac.createGain();
+      o.type = type || "sine"; o.frequency.setValueAtTime(freq, ac.currentTime);
+      if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, ac.currentTime + dur);
+      g.gain.setValueAtTime(vol || 0.15, ac.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
+      o.connect(g); g.connect(ac.destination);
+      o.start(); o.stop(ac.currentTime + dur);
+    } catch (e) {}
+  },
+  noise: function (dur, vol) {
+    if (SAVE.muted) return;
+    var ac = this.ensure(); if (!ac) return;
+    try {
+      var len = Math.floor(ac.sampleRate * dur);
+      var buf = ac.createBuffer(1, len, ac.sampleRate);
+      var data = buf.getChannelData(0);
+      for (var i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      var src = ac.createBufferSource(); src.buffer = buf;
+      var f = ac.createBiquadFilter(); f.type = "bandpass"; f.frequency.value = 1800;
+      var g = ac.createGain(); g.gain.value = vol || 0.25;
+      src.connect(f); f.connect(g); g.connect(ac.destination); src.start();
+    } catch (e) {}
+  },
+  bounce: function () { this.tone(140, 0.12, "sine", 0.2, 70); },
+  swish: function () { this.noise(0.25, 0.3); this.tone(880, 0.15, "sine", 0.1, 1320); },
+  rim: function () { this.tone(220, 0.08, "square", 0.06, 180); },
+  buzzer: function () { this.tone(180, 0.7, "sawtooth", 0.18, 120); },
+  click: function () { this.tone(660, 0.06, "sine", 0.1); }
+};
+
+// ---------- save / menu ----------
+function persistSave() { saveSave(SAVE); }
+function updateMenu() {
+  $("menuBestScore").textContent = String(SAVE.best);
+  $("menuBestLevel").textContent = String(Math.max(SAVE.bestLevel, SAVE.level));
+  $("menuCoins").textContent = String(SAVE.coins);
+  $("menuStreak").textContent = "\uD83D\uDD25 " + SAVE.dailyStreak + "-day";
+  $("menuBest").textContent = "Best score: " + SAVE.best;
+  $("menuRank").textContent = "Rank: " + rankForScore(SAVE.best) +
+    (SAVE.best < 500 ? " — reach " + nextRankAt(SAVE.best) + " points for the next rank!" : " — top rank, Legend!");
+  checkDailyBonus();
+}
+function nextRankAt(score) {
+  for (var i = 0; i < RANKS.length; i++) if (score < RANKS[i].min) return RANKS[i].min;
+  return 500;
+}
+function checkDailyBonus() {
+  var today = dateStr(new Date());
+  if (isDailyAvailable(SAVE.dailyLast, today)) {
+    show($("dailyBonus"), true);
+    var y = new Date(); y.setDate(y.getDate() - 1);
+    var ns = dailyStreakOnClaim(SAVE.dailyLast, today, dateStr(y), SAVE.dailyStreak);
+    $("dailyBonusText").textContent = "Daily Bonus — Day " + ns + ": claim " + dailyReward(ns) + " coins!";
+  } else {
+    show($("dailyBonus"), false);
+  }
+}
+function claimDailyBonus() {
+  var today = dateStr(new Date());
+  if (!isDailyAvailable(SAVE.dailyLast, today)) return false;
+  var y = new Date(); y.setDate(y.getDate() - 1);
+  var ns = dailyStreakOnClaim(SAVE.dailyLast, today, dateStr(y), SAVE.dailyStreak);
+  SAVE.dailyStreak = ns;
+  SAVE.dailyLast = today;
+  SAVE.coins += dailyReward(ns);
+  persistSave();
+  updateMenu();
+  AudioSys.swish();
+  return true;
+}
+
+// ---------- tutorial ----------
+function startTutorial() {
+  G.tutorial.active = true; G.tutorial.step = 0;
+  showTutorial();
+}
+function showTutorial() {
+  var t = G.tutorial;
+  $("tutorialStep").textContent = "STEP " + (t.step + 1) + " OF 3";
+  $("tutorialText").textContent = TUT_STEPS[t.step];
+  var dots = "";
+  for (var i = 0; i < 3; i++) dots += (i === t.step ? "\u25CF" : "\u25CB");
+  $("tutorialDots").textContent = dots;
+  show($("tutorialBar"), true);
+}
+function advanceTutorial() {
+  if (!G.tutorial.active) return;
+  if (G.tutorial.step < 2) { G.tutorial.step++; showTutorial(); }
+  else endTutorial();
+}
+function endTutorial() {
+  if (!G.tutorial.active) return;
+  G.tutorial.active = false;
+  SAVE.tutorialSeen = true;
+  persistSave();
+  show($("tutorialBar"), false);
+}
+
+// ---------- game flow ----------
+function resetBall() {
+  var b = G.ball;
+  b.x = BALL_START_X; b.y = BALL_START_Y; b.vx = 0; b.vy = 0;
+  b.rimTouched = false; b.boardTouched = false; b.scored = false; b.landed = false; b.flying = false;
+  G.resetIn = 0;
+}
+function startGame(level) {
+  G.level = level || 1;
+  G.score = 0; G.makes = 0; G.misses = 0; G.streak = 0; G.bestStreak = 0;
+  G.coinsEarned = 0; G.timeLeft = ROUND_TIME; G.hoopT = 0;
+  G.popups = []; G.netSway = 0; G.shots = 0;
+  G.particles = [];
+  G.hoopPhase = G.rng() * Math.PI * 2; // seeded per-level hoop pattern offset
+  resetBall();
+  G.hoop = hoopPosition(G.level, 0, G.hoopPhase);
+  setState("playing");
+  show($("menuOverlay"), false);
+  show($("resultsOverlay"), false);
+  show($("pauseOverlay"), false);
+  show($("tutorialBar"), false);
+  if (!SAVE.tutorialSeen) startTutorial();
+  updateHUD();
+}
+function endRound() {
+  setState("results");
+  G.timeLeft = 0;
+  var isBest = G.score > SAVE.best;
+  if (isBest) SAVE.best = G.score;
+  if (G.level > SAVE.bestLevel) SAVE.bestLevel = G.level;
+  if (levelReached(G.makes, G.level) && G.level + 1 > SAVE.level) SAVE.level = G.level + 1;
+  persistSave();
+  AudioSys.buzzer();
+  $("resultsTitle").textContent = levelReached(G.makes, G.level)
+    ? "Level " + G.level + " Complete!" : "Time's Up!";
+  $("finalScore").textContent = String(G.score);
+  $("finalMakes").textContent = String(G.makes);
+  $("finalMisses").textContent = String(G.misses);
+  $("finalBestStreak").textContent = String(G.bestStreak);
+  $("finalCoins").textContent = "+" + G.coinsEarned;
+  $("finalLevel").textContent = String(G.level);
+  $("finalBest").textContent = String(SAVE.best);
+  $("resultsSub").textContent = levelReached(G.makes, G.level)
+    ? "You hit " + G.makes + " / " + targetMakes(G.level) + " makes — target reached!"
+    : "You needed " + targetMakes(G.level) + " makes and hit " + G.makes + ". So close — retry!";
+  $("menuRank2").textContent = "Rank: " + rankForScore(SAVE.best);
+  show($("newBestBadge"), isBest && G.score > 0);
+  show($("btnNextLevel"), levelReached(G.makes, G.level));
+  show($("resultsOverlay"), true);
+  show($("tutorialBar"), false);
+  announce("Time up. Score " + G.score + ", " + G.makes + " makes, best score " + SAVE.best + ".");
+  updateHUD();
+}
+function pauseGame() {
+  if (G.state !== "playing") return;
+  setState("paused");
+  $("pauseScore").textContent = String(G.score);
+  $("pauseLevel").textContent = String(G.level);
+  $("pauseMakes").textContent = String(G.makes);
+  show($("pauseOverlay"), true);
+}
+function resumeGame() {
+  if (G.state !== "paused") return;
+  setState("playing");
+  show($("pauseOverlay"), false);
+}
+function showMenu() {
+  setState("menu");
+  show($("resultsOverlay"), false);
+  show($("pauseOverlay"), false);
+  show($("tutorialBar"), false);
+  show($("menuOverlay"), true);
+  updateMenu();
+  updateHUD();
+}
+function toggleMute() {
+  SAVE.muted = !SAVE.muted;
+  persistSave();
+  $("btnSound").textContent = SAVE.muted ? "\uD83D\uDD07 Sound: Off" : "\uD83D\uDD0A Sound: On";
+  return SAVE.muted;
+}
+
+// ---------- shooting ----------
+function launchShot(vx, vy) {
+  if (G.state !== "playing" || G.ball.flying) return false;
+  var b = G.ball;
+  b.vx = vx; b.vy = vy; b.flying = true;
+  b.rimTouched = false; b.boardTouched = false; b.scored = false; b.landed = false;
+  G.shots++;
+  return true;
+}
+function handleMake(swish) {
+  G.makes++;
+  G.streak++;
+  if (G.streak > G.bestStreak) G.bestStreak = G.streak;
+  var pts = scoreForMake(swish);
+  var coins = coinsForMake(G.streak, swish);
+  G.score += pts;
+  G.coinsEarned += coins;
+  SAVE.coins += coins;
+  persistSave();
+  G.netSway = 1; G.netSwayT = 0;
+  // layered juice, all within ~100ms of the make: sound + net sway +
+  // score pop + particle burst (particles gated by reduced-motion).
+  spawnBurst(G.hoop.x, G.hoop.y + 10, swish ? "#ffd166" : "#ffffff", swish ? 16 : 10);
+  G.popups.push({ x: G.hoop.x, y: G.hoop.y - 70, text: swish ? "SWISH! +" + pts : "+" + pts,
+                  life: 1.2, max: 1.2 });
+  if (G.streak >= 3) G.popups.push({ x: G.hoop.x, y: G.hoop.y - 100,
+    text: "STREAK x" + streakMultiplier(G.streak) + "!", life: 1.2, max: 1.2 });
+  AudioSys.swish();
+  announce("Swish! Score " + G.score + ", " + G.makes + " makes.");
+  if (G.tutorial.active) endTutorial();
+}
+function handleMiss() {
+  G.misses++;
+  G.streak = 0;
+  G.popups.push({ x: G.ball.x, y: G.ball.y - 50, text: "MISS", life: 1.0, max: 1.0 });
+}
+function stepGame(dt) {
+  if (G.state !== "playing") return;
+  G.timeLeft -= dt;
+  if (G.timeLeft <= 0) { endRound(); return; }
+  G.hoopT += dt;
+  G.hoop = hoopPosition(G.level, G.hoopT, G.hoopPhase);
+  if (G.netSway > 0) { G.netSwayT += dt; if (G.netSwayT > 0.9) G.netSway = 0; }
+  for (var pi = G.particles.length - 1; pi >= 0; pi--) {
+    var pt = G.particles[pi];
+    pt.vy += 700 * dt; pt.x += pt.vx * dt; pt.y += pt.vy * dt; pt.life -= dt;
+    if (pt.life <= 0) G.particles.splice(pi, 1);
+  }
+  for (var i = G.popups.length - 1; i >= 0; i--) {
+    G.popups[i].life -= dt;
+    if (G.popups[i].life <= 0) G.popups.splice(i, 1);
+  }
+  var b = G.ball;
+  if (b.flying) {
+    var ev = stepBall(b, G.hoop, dt);
+    if (ev.rimHit || ev.boardHit) AudioSys.rim();
+    if (ev.bounced) AudioSys.bounce();
+    if (ev.scored) handleMake(ev.swish);
+    if (b.landed) {
+      if (G.resetIn <= 0) G.resetIn = 0.35;
+    }
+    if (b.y > 640) { // safety: ball somehow below the floor
+      handleMiss();
+      resetBall();
+    }
+  }
+  if (G.resetIn > 0) {
+    G.resetIn -= dt;
+    if (G.resetIn <= 0) {
+      if (!b.scored) handleMiss();
+      resetBall();
+    }
+  }
+  updateHUD();
+}
+function updateHUD() {
+  $("hudScore").textContent = String(G.score);
+  $("hudBest").textContent = String(Math.max(SAVE.best, G.score));
+  $("hudLevel").textContent = String(G.level);
+  $("hudMakes").textContent = String(G.makes);
+  $("hudTarget").textContent = "/ " + targetMakes(G.level);
+  $("hudCoins").textContent = String(SAVE.coins);
+  var t = Math.max(0, Math.ceil(G.timeLeft));
+  $("timeText").textContent = String(t);
+  var pct = Math.max(0, Math.min(100, G.timeLeft / ROUND_TIME * 100));
+  var fill = $("timeFill");
+  fill.style.width = pct + "%";
+  fill.classList.toggle("low", G.timeLeft <= 10);
+  var badge = $("streakBadge");
+  if (G.state === "playing" && G.streak >= 2) {
+    show(badge, true);
+    badge.textContent = "\uD83D\uDD25 Streak " + G.streak + " — x" + streakMultiplier(G.streak) + " coins";
+  } else show(badge, false);
+}
+
+// ---------- input (pointer drag from the ball) ----------
+function canvasPos(e) {
+  var r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * 960 / r.width, y: (e.clientY - r.top) * 600 / r.height };
+}
+function onDown(e) {
+  if (G.state !== "playing" || G.ball.flying) return;
+  AudioSys.unlock(); // first gesture unlocks/resumes audio
+  var p = canvasPos(e);
+  if (Math.hypot(p.x - G.ball.x, p.y - G.ball.y) < 90) {
+    G.dragging = true;
+    // keep tracking the drag even if the pointer leaves the canvas
+    try { if (e.pointerId !== undefined && canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId); } catch (err) {}
+    G.dragSX = p.x; G.dragSY = p.y; G.dragX = p.x; G.dragY = p.y;
+    if (e.preventDefault) e.preventDefault();
+    if (G.tutorial.active && G.tutorial.step === 0) advanceTutorial();
+  }
+}
+function onMove(e) {
+  if (!G.dragging) return;
+  var p = canvasPos(e);
+  G.dragX = p.x; G.dragY = p.y;
+  if (e.preventDefault) e.preventDefault();
+}
+function onUp(e) {
+  if (!G.dragging) return;
+  G.dragging = false;
+  var p = canvasPos(e);
+  if (dragLength(G.dragSX, G.dragSY, p.x, p.y) < 12) return; // too short: not a shot
+  var v = dragToVelocity(G.dragSX, G.dragSY, p.x, p.y);
+  if (launchShot(v.vx, v.vy) && G.tutorial.active && G.tutorial.step === 1) advanceTutorial();
+}
+canvas.addEventListener("pointerdown", onDown);
+canvas.addEventListener("pointermove", onMove);
+canvas.addEventListener("pointerup", onUp);
+canvas.addEventListener("pointercancel", function () { G.dragging = false; });
+
+// Keyboard: keys held in a Set, read inside update() — handlers never act directly.
+var keysDown = {};
+if (typeof window !== "undefined" && window.addEventListener) {
+  window.addEventListener("keydown", function (e) { keysDown[e.key] = true; });
+  window.addEventListener("keyup", function (e) { delete keysDown[e.key]; });
+}
+function handleKeys() {
+  if (keysDown[" "] || keysDown["Enter"]) {
+    delete keysDown[" "]; delete keysDown["Enter"];
+    if (G.state === "menu") startGame(SAVE.level);
+    else if (G.state === "results") startGame(G.level);
+    else if (G.state === "paused") resumeGame();
+  }
+  if (keysDown["p"] || keysDown["P"]) {
+    delete keysDown["p"]; delete keysDown["P"];
+    if (G.state === "playing") pauseGame();
+    else if (G.state === "paused") resumeGame();
+  }
+}
+// update() mutates state only; render() draws only.
+function update(dt) {
+  handleKeys();
+  stepGame(dt);
+}
+
+// ---------- buttons ----------
+$("btnPlay").addEventListener("click", function () { AudioSys.click(); startGame(SAVE.level); });
+$("btnRetry").addEventListener("click", function () { AudioSys.click(); startGame(G.level); });
+$("btnNextLevel").addEventListener("click", function () { AudioSys.click(); startGame(G.level + 1); });
+$("btnMenu").addEventListener("click", function () { AudioSys.click(); showMenu(); });
+$("btnPause").addEventListener("click", function () { AudioSys.click(); pauseGame(); });
+$("btnResume").addEventListener("click", function () { AudioSys.click(); resumeGame(); });
+$("btnRestart").addEventListener("click", function () { AudioSys.click(); if (G.state === "playing" || G.state === "paused") startGame(G.level); });
+$("btnRestartPause").addEventListener("click", function () { AudioSys.click(); startGame(G.level); });
+$("btnSound").addEventListener("click", function () { toggleMute(); });
+$("btnClaimDaily").addEventListener("click", function () { claimDailyBonus(); });
+$("btnSkipTutorial").addEventListener("click", function () { endTutorial(); });
+if (SAVE.muted) $("btnSound").textContent = "\uD83D\uDD07 Sound: Off";
+
+// ---------- render ----------
+function drawBall(x, y, r) {
+  ctx.save();
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.closePath();
+  var g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.4, r * 0.15, x, y, r);
+  g.addColorStop(0, "#ffb347"); g.addColorStop(0.55, "#f97b1e"); g.addColorStop(1, "#c85a10");
+  ctx.fillStyle = g; ctx.fill();
+  ctx.lineWidth = 2.5; ctx.strokeStyle = "#7a3a08";
+  ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x - r, y); ctx.lineTo(x + r, y); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x, y - r); ctx.lineTo(x, y + r); ctx.stroke();
+  ctx.beginPath(); ctx.arc(x - r * 1.35, y - r * 0.4, r * 0.95, -0.5, 0.9); ctx.stroke();
+  ctx.beginPath(); ctx.arc(x + r * 1.35, y - r * 0.4, r * 0.95, Math.PI - 0.9, Math.PI + 0.5); ctx.stroke();
+  ctx.restore();
+}
+function drawHoop() {
+  var h = G.hoop, sway = G.netSway > 0 ? Math.sin(G.netSwayT * 18) * 6 * (1 - G.netSwayT / 0.9) : 0;
+  var bx = h.x + h.rimHalf + 16;
+  // pole + backboard
+  ctx.fillStyle = "#5a6270";
+  ctx.fillRect(bx + 8, h.y - 78, 10, 78);
+  ctx.fillStyle = "#f4f6fb";
+  ctx.strokeStyle = "#e2574c"; ctx.lineWidth = 4;
+  ctx.fillRect(bx - 4, h.y - 78, 12, 84);
+  ctx.strokeRect(bx - 4, h.y - 78, 12, 84);
+  ctx.fillStyle = "#e2574c";
+  ctx.fillRect(bx - 4, h.y - 34, 12, 12);
+  // track rail (hoop slides along it)
+  ctx.fillStyle = "rgba(255,255,255,0.25)";
+  ctx.fillRect(600, h.y - 92, 320, 6);
+  // net
+  ctx.strokeStyle = "#f8f8f8"; ctx.lineWidth = 2;
+  var topL = h.x - h.rimHalf + 4, topR = h.x + h.rimHalf - 4;
+  var botL = h.x - h.rimHalf * 0.55 + sway, botR = h.x + h.rimHalf * 0.55 + sway;
+  var botY = h.y + 52;
+  ctx.beginPath();
+  for (var i = 0; i <= 4; i++) {
+    var tx = topL + (topR - topL) * i / 4;
+    var bx2 = botL + (botR - botL) * i / 4;
+    ctx.moveTo(tx, h.y); ctx.lineTo(bx2, botY);
+  }
+  ctx.moveTo(topL, h.y + 16); ctx.lineTo(topR, h.y + 16);
+  ctx.moveTo(topL + 4, h.y + 34); ctx.lineTo(topR - 4, h.y + 34);
+  ctx.stroke();
+  // rim
+  ctx.strokeStyle = "#ff5a2a"; ctx.lineWidth = 6; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(h.x - h.rimHalf, h.y); ctx.lineTo(h.x + h.rimHalf, h.y); ctx.stroke();
+  ctx.fillStyle = "#ff5a2a";
+  ctx.beginPath(); ctx.arc(h.x - h.rimHalf, h.y, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(h.x + h.rimHalf, h.y, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.lineCap = "butt";
+}
+function render() {
+  // sky / arena
+  var sky = ctx.createLinearGradient(0, 0, 0, 260);
+  sky.addColorStop(0, "#1b2a6b"); sky.addColorStop(1, "#2c4a9e");
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, 960, 260);
+  // crowd dots
+  for (var i = 0; i < 90; i++) {
+    var cx = (i * 97) % 960, cy = 30 + ((i * 53) % 130);
+    ctx.fillStyle = ["#ffd166", "#ff6b6b", "#4ecdc4", "#f7fff7", "#c77dff"][(i % 5)];
+    ctx.globalAlpha = 0.55;
+    ctx.beginPath(); ctx.arc(cx, cy, 7, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  // stands band
+  ctx.fillStyle = "#141a3d"; ctx.fillRect(0, 168, 960, 92);
+  ctx.fillStyle = "rgba(255,255,255,0.08)"; ctx.fillRect(0, 168, 960, 6);
+  // court floor
+  var fl = ctx.createLinearGradient(0, 260, 0, 600);
+  fl.addColorStop(0, "#d98a3d"); fl.addColorStop(0.5, "#c97a2e"); fl.addColorStop(1, "#a35f1d");
+  ctx.fillStyle = fl; ctx.fillRect(0, 260, 960, 340);
+  // court lines
+  ctx.strokeStyle = "rgba(255,255,255,0.75)"; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(0, 262); ctx.lineTo(960, 262); ctx.stroke();
+  ctx.beginPath(); ctx.arc(480, 560, 150, Math.PI, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(180, 500, 70, 0, Math.PI * 2); ctx.stroke();
+  ctx.strokeStyle = "rgba(255,255,255,0.35)";
+  ctx.beginPath(); ctx.moveTo(0, 420); ctx.lineTo(960, 420); ctx.stroke();
+  // level label on court
+  ctx.fillStyle = "rgba(255,255,255,0.5)";
+  ctx.font = "900 26px 'Trebuchet MS', Verdana, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("LEVEL " + G.level + "  •  TARGET " + targetMakes(G.level) + " MAKES", 480, 300);
+
+  drawHoop();
+
+  // ball shadow
+  var b = G.ball;
+  var shScale = Math.max(0.4, 1 - (FLOOR_Y - b.y) / 600);
+  ctx.fillStyle = "rgba(0,0,0,0.3)";
+  ctx.beginPath(); ctx.ellipse(b.x, FLOOR_Y + 8, b.r * shScale, 6 * shScale, 0, 0, Math.PI * 2); ctx.fill();
+
+  // trajectory preview while dragging
+  if (G.dragging && dragLength(G.dragSX, G.dragSY, G.dragX, G.dragY) >= 12) {
+    var v = dragToVelocity(G.dragSX, G.dragSY, G.dragX, G.dragY);
+    var pts = simulateTrajectory(b.x, b.y, v.vx, v.vy, 26, 1 / 60);
+    ctx.fillStyle = "#ffffff";
+    for (var j = 0; j < pts.length; j += 2) {
+      ctx.globalAlpha = Math.max(0.15, 0.9 - j / pts.length);
+      ctx.beginPath(); ctx.arc(pts[j].x, pts[j].y, 5, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    // drag arrow
+    ctx.strokeStyle = "#ffd166"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(G.dragSX, G.dragSY); ctx.lineTo(G.dragX, G.dragY); ctx.stroke();
+  }
+
+  drawBall(b.x, b.y, b.r);
+
+  // particles (juice; skipped entirely under prefers-reduced-motion)
+  for (var q = 0; q < G.particles.length; q++) {
+    var pt = G.particles[q];
+    ctx.globalAlpha = Math.max(0, pt.life / pt.max);
+    ctx.fillStyle = pt.color;
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // popups
+  ctx.textAlign = "center";
+  for (var k = 0; k < G.popups.length; k++) {
+    var p = G.popups[k];
+    var a = Math.max(0, p.life / p.max);
+    ctx.globalAlpha = a;
+    ctx.font = "900 34px 'Trebuchet MS', Verdana, sans-serif";
+    ctx.fillStyle = "#ffd166";
+    ctx.fillText(p.text, p.x, p.y - (p.max - p.life) * 40);
+  }
+  ctx.globalAlpha = 1;
+
+  // "drag me" hint on the ball when idle
+  if (G.state === "playing" && !b.flying && !G.dragging && !G.tutorial.active) {
+    ctx.font = "800 16px 'Trebuchet MS', Verdana, sans-serif";
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    ctx.fillText("Drag back from the ball & release!", b.x + 150, b.y - 60);
+  }
+}
+
+// ---------- main loop: fixed-timestep accumulator (60 Hz) ----------
+// Frame delta is clamped to <=250 ms BEFORE accumulating, so a tab-switch
+// or hitch can never spiral into a catch-up storm.
+var ACC = 0, LAST = 0;
+function loop(ts) {
+  requestAnimationFrame(loop);
+  if (!LAST) LAST = ts || 0;
+  var frameDt = ((ts || 0) - LAST) / 1000;
+  LAST = ts || 0;
+  if (!(frameDt > 0)) frameDt = 0.016;
+  if (frameDt > 0.25) frameDt = 0.25;
+  ACC += frameDt;
+  var steps = 0;
+  while (ACC >= 1 / 60 && steps < 5) { update(1 / 60); ACC -= 1 / 60; steps++; }
+  if (steps === 5) ACC = 0; // drop backlog rather than spiral
+  render();
+}
+// Auto-pause on tab hide; on return, reset the time baseline and zero the
+// accumulator so no stale delta leaks into the next frame.
+if (document.addEventListener) document.addEventListener("visibilitychange", function () {
+  if (document.hidden) { if (G.state === "playing") pauseGame(); }
+  else { LAST = 0; ACC = 0; }
+});
+
+updateMenu();
+updateHUD();
+render();
+requestAnimationFrame(loop);
+try { window.__gameReady = true; } catch (e) {}
+
+window.__HoopFlickTest = {
+  G: G, SAVE: SAVE, startGame: startGame, endRound: endRound, stepGame: stepGame,
+  launchShot: launchShot, resetBall: resetBall, claimDailyBonus: claimDailyBonus,
+  toggleMute: toggleMute, endTutorial: endTutorial, advanceTutorial: advanceTutorial,
+  showMenu: showMenu, pauseGame: pauseGame, resumeGame: resumeGame,
+  dragToVelocity: dragToVelocity, clampVelocity: clampVelocity,
+  simulateTrajectory: simulateTrajectory, stepBall: stepBall,
+  targetMakes: targetMakes, rimHalfForLevel: rimHalfForLevel,
+  hoopPosition: hoopPosition, streakMultiplier: streakMultiplier,
+  coinsForMake: coinsForMake, scoreForMake: scoreForMake,
+  rankForScore: rankForScore, levelReached: levelReached,
+  isDailyAvailable: isDailyAvailable, dailyStreakOnClaim: dailyStreakOnClaim,
+  dailyReward: dailyReward, dateStr: dateStr, loadSave: loadSave, saveSave: saveSave,
+  defaultSave: defaultSave, render: render, AudioSys: AudioSys,
+  mulberry32: mulberry32, update: update, setState: setState, keysDown: keysDown,
+  spawnBurst: spawnBurst, announce: announce, resizeCanvas: resizeCanvas,
+  BALL_START_X: BALL_START_X, BALL_START_Y: BALL_START_Y, GRAVITY: GRAVITY,
+  ROUND_TIME: ROUND_TIME, SAVE_KEY: SAVE_KEY
+};
+</script>
+</body>
+</html>
