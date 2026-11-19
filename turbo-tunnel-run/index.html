@@ -1,0 +1,1026 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Turbo Tunnel Run</title>
+<!--
+  Turbo Tunnel Run — original HTML5 endless-runner game. Plain single-file
+  build: 100% code-drawn (Canvas 2D + CSS), no images, no audio files, no
+  external resources, no SDK, no ads, no external URLs at all — the file is
+  fully self-contained. Progress saves to localStorage only.
+
+  How to play: the runner auto-runs through a neon tunnel. Tap / click /
+  Space / ArrowUp (or swipe up) to jump — tap again mid-air for a double
+  jump. Hold for a slightly higher jump. Grab coins (+5 each), dodge spike
+  blocks and floating blocks, and don't fall into floor gaps. Every 250m
+  is a new level (+20 coins, brief breather). Distance in metres is the
+  score. Ranks rise with best distance: Rookie -> Sprinter -> Dasher ->
+  Speedster -> Legend. Daily bonus once a day, streak grows the reward.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: #070718;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    color: #ffffff;
+    user-select: none; -webkit-user-select: none;
+    overflow: hidden;
+  }
+  #wrap { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
+  #game {
+    position: relative;
+    width: min(100vw, 160vh);
+    height: min(100vh, 62.5vw);
+    aspect-ratio: 16 / 10;
+    max-width: 960px; max-height: 600px;
+    background: #0d0d2b;
+    overflow: hidden;
+    border-radius: 6px;
+  }
+  #gameCanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: pointer; }
+  #gameCanvas:focus-visible { outline: 3px solid #22d3ee; outline-offset: -3px; }
+  #hud {
+    position: absolute; top: 0; left: 0; right: 0; height: 62px;
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 14px;
+    background: rgba(7, 7, 24, 0.72);
+    border-bottom: 1px solid rgba(255,255,255,0.10);
+    z-index: 5;
+  }
+  .stat { min-width: 70px; }
+  .stat .lbl { font-size: 11px; letter-spacing: 1px; color: #9aa0c3; text-transform: uppercase; }
+  .stat .val { font-size: 20px; font-weight: 800; line-height: 1.1; }
+  #hudNext { flex: 1; font-size: 14px; color: #cdd2ee; }
+  #hudNext b { color: #ffd166; }
+  button { font-family: inherit; cursor: pointer; border: none; border-radius: 10px; font-weight: 800; color: #141432; }
+  .btn { width: 100%; padding: 13px 8px; font-size: 16px; background: #ffd166; box-shadow: 0 3px 0 #b98a1d; }
+  .btn:active { transform: translateY(2px); box-shadow: none; }
+  .btn.ghost { background: #2a2a55; color: #e6e8ff; box-shadow: 0 3px 0 #17173a; }
+  .btn.blue { background: #22d3ee; box-shadow: 0 3px 0 #0e7490; }
+  .btn.small { width: auto; padding: 8px 12px; font-size: 13px; }
+  .btn:disabled { opacity: 0.45; cursor: default; }
+  #levelBanner {
+    position: absolute; top: 110px; left: 50%; transform: translateX(-50%) scale(0.9);
+    z-index: 6; padding: 10px 26px; border-radius: 24px;
+    background: linear-gradient(90deg, #f59e0b, #ef4444);
+    color: #fff; font-size: 24px; font-weight: 900; letter-spacing: 2px;
+    box-shadow: 0 6px 24px rgba(239, 68, 68, 0.55);
+    opacity: 0; pointer-events: none; transition: opacity 0.2s, transform 0.2s;
+    white-space: nowrap;
+  }
+  #levelBanner.show { opacity: 1; transform: translateX(-50%) scale(1); animation: bannerPop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1); }
+  @keyframes bannerPop { from { transform: translateX(-50%) scale(0.6); } to { transform: translateX(-50%) scale(1); } }
+  #hintBar {
+    position: absolute; left: 0; right: 0; bottom: 8px; z-index: 5;
+    text-align: center; font-size: 14px; color: #9aa0c3; pointer-events: none;
+  }
+  .overlay {
+    position: absolute; inset: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(7, 7, 24, 0.80);
+  }
+  .overlay.hidden { display: none; }
+  .card {
+    width: min(560px, 92%); max-height: 94%; overflow-y: auto;
+    background: #1d1d45; border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 16px; padding: 24px 28px; text-align: center;
+    box-shadow: 0 18px 50px rgba(0,0,0,0.5);
+  }
+  .card h1 { font-size: 40px; line-height: 1.05; letter-spacing: 0.5px;
+    background: linear-gradient(180deg, #ffffff 30%, #22d3ee 75%, #a855f7);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 3px 10px rgba(34, 211, 238, 0.35)); }
+  .card h2 { font-size: 30px; margin-bottom: 6px; }
+  .card p { font-size: 15px; line-height: 1.55; color: #cdd2ee; margin: 8px 0; }
+  .card .btn { margin-top: 10px; }
+  .bigScore { font-size: 44px; font-weight: 900; color: #ffd166; }
+  .scoreRow { display: flex; justify-content: center; gap: 26px; margin: 12px 0 4px; flex-wrap: wrap; }
+  .scoreRow .stat { min-width: 80px; }
+  .scoreRow .stat .val { font-size: 24px; }
+  .menuStats { display: flex; justify-content: center; gap: 10px; margin: 14px 0 2px; flex-wrap: wrap; }
+  .chip { background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 8px 12px; min-width: 92px; }
+  .chip .lbl { font-size: 11px; letter-spacing: 1px; color: #9aa0c3; text-transform: uppercase; }
+  .chip .val { font-size: 19px; font-weight: 800; color: #ffd166; }
+  #dailyBonus {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    background: rgba(255, 209, 102, 0.12); border: 1px solid rgba(255, 209, 102, 0.55);
+    border-radius: 12px; padding: 10px 12px; margin: 12px 0 2px;
+    font-size: 14px; font-weight: 700; color: #fde68a; text-align: left;
+  }
+  #dailyBonus.hidden { display: none; }
+  #dailyBonus .btn { width: auto; margin-top: 0; padding: 9px 14px; font-size: 14px; white-space: nowrap; }
+  .howto { text-align: left; margin: 12px auto; max-width: 430px; font-size: 15px; line-height: 1.8; color: #e6e8ff; }
+  .howto b { color: #ffd166; }
+  #newBestBadge {
+    display: inline-block; margin: 6px 0 2px; padding: 5px 14px; border-radius: 16px;
+    background: linear-gradient(90deg, #f59e0b, #ef4444); color: #fff;
+    font-size: 15px; font-weight: 900; letter-spacing: 1px;
+    box-shadow: 0 4px 16px rgba(239, 68, 68, 0.5);
+  }
+  #newBestBadge.hidden { display: none; }
+  @media (max-width: 700px) {
+    .stat .val { font-size: 16px; }
+    .card h1 { font-size: 30px; }
+    #hudNext { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="game">
+    <canvas id="gameCanvas" width="960" height="600" tabindex="0" aria-label="Turbo Tunnel Run game canvas. Tap or press Space to jump."></canvas>
+    <div id="liveRegion" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);"></div>
+
+    <div id="hud">
+      <div class="stat"><div class="lbl">Distance</div><div class="val" id="hudDist">0m</div></div>
+      <div class="stat"><div class="lbl">Best</div><div class="val" id="hudBest">0m</div></div>
+      <div class="stat"><div class="lbl">Level</div><div class="val" id="hudLevel">1</div></div>
+      <div class="stat"><div class="lbl">Coins</div><div class="val" id="hudCoins">0</div></div>
+      <div id="hudNext">Next level at <b id="hudNextVal">250m</b> &nbsp;•&nbsp; Rank: <b id="hudRank">Rookie</b></div>
+      <button class="btn ghost small" id="btnMute" type="button">Sound: On</button>
+      <button class="btn ghost small" id="btnPause" type="button">Pause</button>
+    </div>
+
+    <div id="levelBanner">LEVEL UP! +20 COINS</div>
+    <div id="hintBar">Tap / Space to jump — tap again mid-air for a double jump. Grab coins, dodge spikes!</div>
+
+    <!-- TUTORIAL (first game only) -->
+    <div class="overlay hidden" id="tutorialOverlay">
+      <div class="card">
+        <h2>How to Run</h2>
+        <div class="howto">
+          <div><b>1.</b> Tap, click or press <b>Space</b> to jump over spikes.</div>
+          <div><b>2.</b> Tap again mid-air for a <b>double jump</b> — hold a little longer to jump higher.</div>
+          <div><b>3.</b> Grab <b>coins</b> (+5 each) and don't fall into floor <b>gaps</b>. Every <b>250m</b> is a new level!</div>
+        </div>
+        <button class="btn" id="btnTutorialStart" type="button">Start Running</button>
+      </div>
+    </div>
+
+    <!-- MENU -->
+    <div class="overlay" id="menuOverlay">
+      <div class="card">
+        <h1>TURBO<br>TUNNEL RUN</h1>
+        <p>Dash through the neon tunnel! Jump spikes, clear gaps, grab coins — how far can you run?</p>
+        <div id="dailyBonus" class="hidden">
+          <span id="dailyBonusText"></span>
+          <button class="btn blue" id="btnClaimDaily" type="button">Claim</button>
+        </div>
+        <div class="menuStats">
+          <div class="chip"><div class="lbl">Best Distance</div><div class="val" id="menuBest">0m</div></div>
+          <div class="chip"><div class="lbl">Best Level</div><div class="val" id="menuLevel">1</div></div>
+          <div class="chip"><div class="lbl">Rank</div><div class="val" id="menuRank">Rookie</div></div>
+          <div class="chip"><div class="lbl">Daily Streak</div><div class="val" id="menuStreak">0 days</div></div>
+          <div class="chip"><div class="lbl">Coins</div><div class="val" id="menuCoins">0</div></div>
+        </div>
+        <p id="menuRankLine">Rank: Rookie — reach 250m to become a Sprinter!</p>
+        <button class="btn" id="btnPlay" type="button">Play</button>
+        <p style="margin-top:12px;">Tap / Space to jump &nbsp;•&nbsp; Double-tap mid-air for a double jump</p>
+      </div>
+    </div>
+
+    <!-- PAUSE -->
+    <div class="overlay hidden" id="pauseOverlay">
+      <div class="card">
+        <h2>Paused</h2>
+        <p>Take a breath. The tunnel waits for you.</p>
+        <div class="scoreRow">
+          <div class="stat"><div class="lbl">Distance</div><div class="val" id="pauseDist">0m</div></div>
+          <div class="stat"><div class="lbl">Level</div><div class="val" id="pauseLevel">1</div></div>
+          <div class="stat"><div class="lbl">Coins</div><div class="val" id="pauseCoins">0</div></div>
+        </div>
+        <button class="btn" id="btnResume" type="button">Resume</button>
+        <button class="btn blue" id="btnRestartPause" type="button">Restart Run</button>
+        <button class="btn ghost" id="btnQuitPause" type="button">Back to Menu</button>
+      </div>
+    </div>
+
+    <!-- RESULTS -->
+    <div class="overlay hidden" id="overOverlay">
+      <div class="card">
+        <h2>Run Over!</h2>
+        <p>The tunnel got you this time. Great run!</p>
+        <div><span id="newBestBadge" class="hidden">NEW BEST!</span></div>
+        <div class="bigScore" id="finalDist">0m</div>
+        <div class="scoreRow">
+          <div class="stat"><div class="lbl">Best</div><div class="val" id="finalBest">0m</div></div>
+          <div class="stat"><div class="lbl">Coins Earned</div><div class="val" id="finalCoins">+0</div></div>
+          <div class="stat"><div class="lbl">Level</div><div class="val" id="finalLevel">1</div></div>
+          <div class="stat"><div class="lbl">Rank</div><div class="val" id="finalRank">Rookie</div></div>
+        </div>
+        <button class="btn" id="btnRetry" type="button">Retry</button>
+        <button class="btn ghost" id="btnMenu" type="button">Menu</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+   PURE GAME LOGIC (no DOM) — marked for unit testing.
+   Units: pixels per frame at 60fps. Ground top y = 470, runner 44x56.
+   ===================================================================== */
+// __PURE_LOGIC_START__
+var GRAVITY = 0.85, JUMP_V = -16.5, DOUBLE_JUMP_V = -15, MAX_FALL = 20;
+var GROUND_Y = 470, RUNNER_X = 180, RUNNER_W = 44, RUNNER_H = 56;
+var BASE_SPEED = 6, MAX_SPEED = 14, SPEED_PER_100M = 0.5;
+var LEVEL_EVERY = 250, COIN_VALUE = 5, LEVEL_BONUS = 20, COIN_PICKUP_R = 36;
+var RANKS = [[0, "Rookie"], [250, "Sprinter"], [750, "Dasher"], [2000, "Speedster"], [5000, "Legend"]];
+// Speed ramps +0.5 per 100m, capped at MAX_SPEED.
+function speedForDistance(d) {
+  if (d < 0) d = 0;
+  return Math.min(BASE_SPEED + SPEED_PER_100M * Math.floor(d / 100), MAX_SPEED);
+}
+function levelForDistance(d) { return Math.floor(Math.max(0, d) / LEVEL_EVERY) + 1; }
+function nextLevelAt(d) { return levelForDistance(d) * LEVEL_EVERY; }
+function distanceScore(d) { return Math.floor(Math.max(0, d)); }
+function rankForDistance(d) {
+  var r = "Rookie", i;
+  for (i = 0; i < RANKS.length; i++) if (d >= RANKS[i][0]) r = RANKS[i][1];
+  return r;
+}
+// Seeded PRNG (mulberry32) — ALL gameplay randomness flows through this,
+// never unseeded randomness, so a run is reproducible from the save's seed.
+function mulberry32(seed) {
+  var a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    var t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function randRange(rng, min, max) { return min + rng() * (max - min); }
+function randChance(rng, p) { return rng() < p; }
+function createRunner() {
+  return { x: RUNNER_X, y: GROUND_Y - RUNNER_H, vy: 0, jumps: 0, grounded: true, w: RUNNER_W, h: RUNNER_H, jumpBuffer: 0, coyote: 0 };
+}
+// Buffer a jump request (~150ms = 9 frames at 60Hz): a tap just before
+// landing still registers. Consumed by stepRunner, never acted on directly.
+function requestJump(r) { r.jumpBuffer = 9; }
+// First jump from the ground, second jump mid-air. Returns true if a jump happened.
+function tryJump(r) {
+  if (r.grounded) { r.vy = JUMP_V; r.jumps = 1; r.grounded = false; r.coyote = 0; return true; }
+  if (r.jumps < 2) { r.vy = DOUBLE_JUMP_V; r.jumps = 2; return true; }
+  return false;
+}
+// Variable jump height: releasing early cuts upward velocity.
+function releaseJump(r) {
+  if (!r.grounded && r.vy < -6) r.vy = -6;
+}
+function stepRunner(r) {
+  // Coyote time (~100ms = 6 frames): still jumpable just after leaving ground.
+  if (r.grounded) r.coyote = 6;
+  else if (r.coyote > 0) r.coyote--;
+  if (r.jumpBuffer > 0) {
+    r.jumpBuffer--;
+    // Ground or coyote jump: a full first jump (JUMP_V, jumps=1).
+    if (r.grounded || r.coyote > 0) { r.vy = JUMP_V; r.jumps = 1; r.grounded = false; r.coyote = 0; r.jumpBuffer = 0; }
+    else if (r.jumps < 2) { tryJump(r); r.jumpBuffer = 0; }
+  }
+  r.vy = Math.min(r.vy + GRAVITY, MAX_FALL);
+  r.y += r.vy;
+  if (r.y >= GROUND_Y - RUNNER_H) { r.y = GROUND_Y - RUNNER_H; r.vy = 0; r.grounded = true; r.jumps = 0; }
+  else r.grounded = false;
+  return r;
+}
+function rectsOverlap(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+function runnerRect(r) { return { x: r.x + 6, y: r.y + 4, w: r.w - 12, h: r.h - 4 }; }
+function obstacleRect(o) {
+  if (o.type === "spike") return { x: o.x, y: GROUND_Y - o.h, w: o.w, h: o.h };
+  if (o.type === "float") return { x: o.x, y: o.y, w: o.w, h: o.h };
+  return null;
+}
+function hitsObstacle(r, o) {
+  if (o.type === "gap") return false;
+  var b = obstacleRect(o);
+  return b ? rectsOverlap(runnerRect(r), b) : false;
+}
+// Runner centre-x inside the gap (with a small forgiveness margin).
+function isOverGap(r, gap) {
+  var cx = r.x + r.w / 2;
+  return cx > gap.x + 4 && cx < gap.x + gap.w - 4;
+}
+function runnerFallsInGap(r, gap) { return r.grounded && isOverGap(r, gap); }
+function coinHit(r, c) {
+  var dx = (r.x + r.w / 2) - c.x, dy = (r.y + r.h / 2) - c.y;
+  return dx * dx + dy * dy < COIN_PICKUP_R * COIN_PICKUP_R;
+}
+function coinArc(x, y) {
+  var out = [], i;
+  for (i = 0; i < 5; i++) out.push({ x: x + i * 34, y: y - Math.sin(i * Math.PI / 4) * 46, r: 12, got: false });
+  return out;
+}
+function coinLine(x, y, n) {
+  var out = [], i;
+  for (i = 0; i < n; i++) out.push({ x: x + i * 36, y: y, r: 12, got: false });
+  return out;
+}
+// Seeded pattern table: obstacles spawn from these fixed patterns, with
+// density rising as the run gets longer (spawn interval shrinks in game code).
+var PATTERNS = [
+  { obs: [{ type: "spike", dx: 0, w: 40, h: 50 }], coins: "arc", coinDx: 0, coinY: 380 },
+  { obs: [{ type: "spike", dx: 0, w: 40, h: 50 }, { type: "spike", dx: 70, w: 40, h: 50 }], coins: "arc", coinDx: 20, coinY: 380 },
+  { obs: [{ type: "float", dx: 0, w: 46, h: 40, y: 360 }], coins: "arc", coinDx: -20, coinY: 330 },
+  { obs: [{ type: "gap", dx: 0, w: 110 }], coins: "arc", coinDx: 0, coinY: 360 },
+  { obs: [{ type: "spike", dx: 0, w: 40, h: 50 }, { type: "gap", dx: 120, w: 100 }], coins: "line", coinDx: 110, coinY: 380 },
+  { obs: [{ type: "float", dx: 0, w: 46, h: 40, y: 340 }, { type: "spike", dx: 140, w: 40, h: 50 }], coins: "arc", coinDx: 130, coinY: 380 }
+];
+function patternCount() { return PATTERNS.length; }
+function spawnPattern(idx, startX) {
+  var p = PATTERNS[((idx % PATTERNS.length) + PATTERNS.length) % PATTERNS.length];
+  var obs = [], coins = [], i, o;
+  for (i = 0; i < p.obs.length; i++) {
+    o = { type: p.obs[i].type, x: startX + p.obs[i].dx, w: p.obs[i].w, h: p.obs[i].h || 0 };
+    if (p.obs[i].y !== undefined) o.y = p.obs[i].y;
+    obs.push(o);
+  }
+  if (p.coins === "arc") coins = coinArc(startX + p.coinDx, p.coinY);
+  else if (p.coins === "line") coins = coinLine(startX + p.coinDx, p.coinY, 4);
+  return { obstacles: obs, coins: coins };
+}
+// Daily bonus helpers (date strings are YYYY-MM-DD).
+function dateStr(d) {
+  var m = d.getMonth() + 1, day = d.getDate();
+  return d.getFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (day < 10 ? "0" : "") + day;
+}
+function prevDateStr(ds) {
+  var d = new Date(ds + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() - 1);
+  return dateStr(new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
+function isDailyAvailable(lastDaily, today) { return lastDaily !== today; }
+function dailyStreakOnClaim(lastDaily, today, yesterday, streak) {
+  if (lastDaily === today) return streak;
+  return lastDaily === yesterday ? streak + 1 : 1;
+}
+// Daily reward grows with the streak: 30 coins day 1, +10 per streak day, capped at 120.
+function dailyCoinsForStreak(streak) {
+  return 20 + 10 * Math.min(Math.max(streak, 1), 10);
+}
+var SAVE_VERSION = 1;
+function defaultSave(seed) {
+  return { version: SAVE_VERSION, coins: 0, best: 0, bestLevel: 1, dailyStreak: 0, lastDaily: "", tutorialSeen: false, muted: false, seed: (typeof seed === "number" && seed !== 0) ? (seed | 0) : 123456789 };
+}
+// Migration ladder: v0 saves (no version / no seed) gain version 1 + a seed.
+function migrateSave(p) {
+  var s = defaultSave();
+  if (typeof p.coins === "number" && isFinite(p.coins)) s.coins = Math.max(0, p.coins | 0);
+  if (typeof p.best === "number" && isFinite(p.best)) s.best = Math.max(0, p.best | 0);
+  if (typeof p.bestLevel === "number" && isFinite(p.bestLevel)) s.bestLevel = Math.max(1, p.bestLevel | 0);
+  if (typeof p.dailyStreak === "number" && isFinite(p.dailyStreak)) s.dailyStreak = Math.max(0, p.dailyStreak | 0);
+  if (typeof p.lastDaily === "string") s.lastDaily = p.lastDaily;
+  if (typeof p.tutorialSeen === "boolean") s.tutorialSeen = p.tutorialSeen;
+  if (typeof p.muted === "boolean") s.muted = p.muted;
+  if (typeof p.seed === "number" && isFinite(p.seed) && p.seed !== 0) s.seed = p.seed | 0;
+  s.version = SAVE_VERSION;
+  return s;
+}
+// Guarded parse: bad JSON or wrong types fall back to defaults field by field.
+function parseSave(raw) {
+  if (!raw) return defaultSave();
+  try {
+    var p = JSON.parse(raw);
+    if (p && typeof p === "object") return migrateSave(p);
+  } catch (e) {}
+  return defaultSave();
+}
+function serializeSave(s) { return JSON.stringify(s); }
+// Storage is injected as an argument so tests can pass a Map-backed fake.
+function loadSaveFrom(storage, key) {
+  var raw = null;
+  try { raw = storage.getItem(key); } catch (e) { raw = null; }
+  return parseSave(raw);
+}
+function saveTo(storage, key, save) {
+  try { storage.setItem(key, serializeSave(save)); return true; } catch (e) { return false; }
+}
+// __PURE_LOGIC_END__
+
+/* ---------- Save: localStorage only, all access try/catch-guarded ----------
+   Saved only on meaningful events (claim, crash, pause, mute, tutorial),
+   never every frame. Storage is injected (loadSaveFrom/saveTo) for tests. */
+var SAVE_KEY = "tunnelrun_save_v1";
+var SAVE = defaultSave();
+function loadSave() {
+  SAVE = loadSaveFrom(window.localStorage, SAVE_KEY);
+  if (!SAVE.seed) SAVE.seed = (Date.now() % 2147483646) + 1;
+}
+function persistSave() { saveTo(window.localStorage, SAVE_KEY, SAVE); }
+/* Seeded PRNG instance for ALL gameplay randomness (spawn extras). */
+var RNG = mulberry32(SAVE.seed);
+/* prefers-reduced-motion gates shake/particles/parallax/flash. */
+var REDUCED = false;
+try { REDUCED = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) { REDUCED = false; }
+
+/* ---------- Audio: WebAudio oscillator beeps only, no audio files ---------- */
+var AudioSys = {
+  ctx: null, userMuted: false,
+  ensure: function () {
+    if (!this.ctx) {
+      try {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (AC) this.ctx = new AC();
+      } catch (e) { this.ctx = null; }
+    }
+    if (this.ctx && this.ctx.state === "suspended") { this.ctx.resume().catch(function () {}); }
+    return this.ctx;
+  },
+  muted: function () { return this.userMuted; },
+  tone: function (freq, dur, type, vol, delay) {
+    if (this.muted()) return;
+    var ctx = this.ensure(); if (!ctx) return;
+    try {
+      var t0 = ctx.currentTime + (delay || 0);
+      var o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = type || "sine"; o.frequency.setValueAtTime(freq, t0);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(vol || 0.12, t0 + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(t0); o.stop(t0 + dur + 0.05);
+    } catch (e) {}
+  },
+  jump: function () { this.tone(520, 0.12, "triangle", 0.12); },
+  coin: function () { this.tone(880, 0.08, "sine", 0.12); this.tone(1318, 0.12, "sine", 0.10, 0.06); },
+  crash: function () { this.tone(220, 0.25, "sawtooth", 0.10); this.tone(110, 0.4, "sawtooth", 0.10, 0.15); },
+  levelUp: function () { var n = [523, 659, 784, 1047]; for (var i = 0; i < n.length; i++) this.tone(n[i], 0.16, "triangle", 0.12, i * 0.08); },
+  click: function () { this.tone(600, 0.05, "square", 0.05); }
+};
+
+/* =====================================================================
+   RUN STATE + GAME LOOP
+   ===================================================================== */
+var canvas = document.getElementById("gameCanvas");
+var ctx = canvas.getContext("2d");
+var DPR = 1;
+function resizeCanvas() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = 960 * DPR; canvas.height = 600 * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0); // single uniform scale, letterboxed by CSS
+}
+resizeCanvas();
+if (typeof window.addEventListener === "function") window.addEventListener("resize", resizeCanvas);
+
+var R = {
+  state: "menu", // single-string scene machine: menu | playing | paused | results
+  distance: 0, coinsRun: 0, level: 1, speed: BASE_SPEED,
+  runner: createRunner(),
+  obstacles: [], coins: [], particles: [],
+  spawnTimer: 80, spawnCount: 0, breather: 0,
+  runPhase: 0, scroll: 0, newBest: false, crashed: false,
+  bannerLevel: 0, bannerFrames: 0
+};
+function live(msg) { var el = $("liveRegion"); if (el) el.textContent = msg; }
+/* Scene machine: enter/exit side effects happen ONLY on the boundary. */
+function setState(next) {
+  if (R.state === next) return;
+  R.state = next;
+  window.__state = next;
+  if (next === "menu") {
+    hide($("overOverlay")); hide($("pauseOverlay")); hide($("tutorialOverlay"));
+    show($("menuOverlay"));
+    updateMenu();
+    live("Menu. Best distance " + SAVE.best + " metres.");
+  } else if (next === "playing") {
+    hide($("menuOverlay")); hide($("overOverlay")); hide($("pauseOverlay")); hide($("tutorialOverlay"));
+    $("levelBanner").classList.remove("show");
+    live("Running. Distance " + distanceScore(R.distance) + " metres.");
+  } else if (next === "paused") {
+    $("pauseDist").textContent = distanceScore(R.distance) + "m";
+    $("pauseLevel").textContent = String(R.level);
+    $("pauseCoins").textContent = "+" + R.coinsRun;
+    show($("pauseOverlay"));
+    persistSave();
+    live("Paused at " + distanceScore(R.distance) + " metres.");
+  } else if (next === "results") {
+    $("finalDist").textContent = distanceScore(R.distance) + "m";
+    $("finalBest").textContent = SAVE.best + "m";
+    $("finalCoins").textContent = "+" + R.coinsRun;
+    $("finalLevel").textContent = String(R.level);
+    $("finalRank").textContent = rankForDistance(SAVE.best);
+    if (R.newBest) show($("newBestBadge")); else hide($("newBestBadge"));
+    show($("overOverlay"));
+    persistSave();
+    live("Run over. " + distanceScore(R.distance) + " metres, level " + R.level + ".");
+  }
+  updateHUD();
+}
+
+function $(id) { return document.getElementById(id); }
+function show(el) { el.classList.remove("hidden"); }
+function hide(el) { el.classList.add("hidden"); }
+
+function updateHUD() {
+  $("hudDist").textContent = distanceScore(R.distance) + "m";
+  $("hudBest").textContent = Math.max(SAVE.best, distanceScore(R.distance)) + "m";
+  $("hudCoins").textContent = String(SAVE.coins);
+  $("hudLevel").textContent = String(R.level);
+  $("hudNextVal").textContent = nextLevelAt(R.distance) + "m";
+  $("hudRank").textContent = rankForDistance(Math.max(SAVE.best, R.distance));
+}
+function updateMenu() {
+  $("menuBest").textContent = SAVE.best + "m";
+  $("menuLevel").textContent = String(Math.max(1, SAVE.bestLevel));
+  $("menuRank").textContent = rankForDistance(SAVE.best);
+  $("menuStreak").textContent = SAVE.dailyStreak + (SAVE.dailyStreak === 1 ? " day" : " days");
+  $("menuCoins").textContent = String(SAVE.coins);
+  $("menuRankLine").textContent = "Rank: " + rankForDistance(SAVE.best) + " — reach " +
+    (rankForDistance(SAVE.best) === "Legend" ? "you are a Legend!" : nextRankAt(SAVE.best) + "m for the next rank!");
+  updateDailyPanel();
+  $("btnMute").textContent = SAVE.muted ? "Sound: Off" : "Sound: On";
+}
+function nextRankAt(best) {
+  for (var i = 0; i < RANKS.length; i++) if (best < RANKS[i][0]) return RANKS[i][0];
+  return 5000;
+}
+function todayStr() { return dateStr(new Date()); }
+function updateDailyPanel() {
+  var panel = $("dailyBonus"), today = todayStr();
+  if (isDailyAvailable(SAVE.lastDaily, today)) {
+    var next = dailyStreakOnClaim(SAVE.lastDaily, today, prevDateStr(today), SAVE.dailyStreak);
+    $("dailyBonusText").textContent = "Daily bonus: Day " + next + " streak — +" + dailyCoinsForStreak(next) + " coins!";
+    show(panel);
+  } else hide(panel);
+}
+function claimDaily() {
+  var today = todayStr();
+  if (!isDailyAvailable(SAVE.lastDaily, today)) return false;
+  SAVE.dailyStreak = dailyStreakOnClaim(SAVE.lastDaily, today, prevDateStr(today), SAVE.dailyStreak);
+  SAVE.lastDaily = today;
+  SAVE.coins += dailyCoinsForStreak(SAVE.dailyStreak);
+  persistSave();
+  updateMenu(); updateHUD();
+  AudioSys.levelUp();
+  return true;
+}
+function toggleMute() {
+  SAVE.muted = !SAVE.muted;
+  AudioSys.userMuted = SAVE.muted;
+  persistSave();
+  $("btnMute").textContent = SAVE.muted ? "Sound: Off" : "Sound: On";
+  return SAVE.muted;
+}
+function showLevelBanner(level) {
+  R.bannerLevel = level;
+  R.bannerFrames = 100; // ~1.6s at 60Hz; render() shows/hides the banner
+  live("Level " + level + "! Bonus " + LEVEL_BONUS + " coins.");
+}
+function startRun() {
+  R.distance = 0; R.coinsRun = 0; R.level = 1; R.speed = BASE_SPEED;
+  R.runner = createRunner();
+  R.obstacles = []; R.coins = []; R.particles = [];
+  R.spawnTimer = 80; R.spawnCount = 0; R.breather = 0;
+  R.runPhase = 0; R.scroll = 0; R.newBest = false; R.crashed = false;
+  R.bannerLevel = 0; R.bannerFrames = 0;
+  setState("playing");
+  AudioSys.click();
+}
+function showTutorialOrStart() {
+  if (!SAVE.tutorialSeen) { hide($("menuOverlay")); show($("tutorialOverlay")); }
+  else startRun();
+}
+function finishTutorial() {
+  SAVE.tutorialSeen = true;
+  persistSave();
+  startRun();
+}
+function doJump() {
+  if (R.state !== "playing") return false;
+  requestJump(R.runner);
+  AudioSys.jump();
+  return true;
+}
+function pauseGame() {
+  if (R.state !== "playing") return;
+  setState("paused");
+}
+function resumeGame() {
+  if (R.state !== "paused") return;
+  setState("playing");
+  AudioSys.click();
+}
+function quitToMenu() {
+  setState("menu");
+}
+function crashRun() {
+  if (R.state !== "playing") return;
+  R.crashed = true;
+  AudioSys.crash();
+  var d = distanceScore(R.distance);
+  R.newBest = d > SAVE.best;
+  if (R.newBest) SAVE.best = d;
+  if (R.level > SAVE.bestLevel) SAVE.bestLevel = R.level;
+  setState("results");
+}
+/* Keys live in a Set; update() reads them (handlers never act directly). */
+var keys = new Set();
+var keyJumpHeld = false, keyPauseHeld = false, menuKeyHeld = false;
+function pollKeys() {
+  var down = keys.has("Space") || keys.has("ArrowUp");
+  if (down && !keyJumpHeld) { requestJump(R.runner); keyJumpHeld = true; }
+  else if (!down && keyJumpHeld) { releaseJump(R.runner); keyJumpHeld = false; }
+  var pDown = keys.has("KeyP");
+  if (pDown && !keyPauseHeld) {
+    keyPauseHeld = true;
+    if (R.state === "playing") pauseGame();
+    else if (R.state === "paused") resumeGame();
+  } else if (!pDown) keyPauseHeld = false;
+}
+function menuKeyEdge() {
+  var down = keys.has("Space") || keys.has("ArrowUp");
+  if (down && !menuKeyHeld) {
+    menuKeyHeld = true;
+    if (R.state === "menu") showTutorialOrStart();
+    else if (R.state === "results") startRun();
+  } else if (!down) menuKeyHeld = false;
+  var pDown = keys.has("KeyP");
+  if (pDown && !keyPauseHeld) {
+    keyPauseHeld = true;
+    if (R.state === "paused") resumeGame();
+  } else if (!pDown) keyPauseHeld = false;
+}
+/* Juice: landing dust puff + coin sparkle burst (gated by reduced motion). */
+function spawnDust(x, y) {
+  if (REDUCED) return;
+  for (var i = 0; i < 8; i++) {
+    R.particles.push({ x: x + randRange(RNG, -14, 14), y: y, vx: randRange(RNG, -1.2, 1.2), vy: randRange(RNG, -1.6, -0.3), life: 22, max: 22, r: randRange(RNG, 2, 4), color: "#cdd2ee" });
+  }
+}
+function spawnSparkle(x, y) {
+  if (REDUCED) return;
+  for (var i = 0; i < 8; i++) {
+    var a = RNG() * Math.PI * 2, sp = randRange(RNG, 1, 3);
+    R.particles.push({ x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 18, max: 18, r: randRange(RNG, 2, 3.5), color: "#ffd166" });
+  }
+}
+function updateParticles() {
+  for (var i = R.particles.length - 1; i >= 0; i--) {
+    var p = R.particles[i];
+    p.life--; p.x += p.vx; p.y += p.vy; p.vy += 0.12;
+    if (p.life <= 0) R.particles.splice(i, 1);
+  }
+}
+// One fixed 60Hz update step: mutates state only, draws nothing.
+// (HUD/banner presentation lives in render().)
+function stepFrame() {
+  if (R.state !== "playing") return;
+  pollKeys();
+  if (R.breather > 0) R.breather--;
+  if (R.bannerFrames > 0) R.bannerFrames--;
+  var speedFactor = R.breather > 0 ? 0.7 : 1;
+  R.speed = speedForDistance(R.distance) * speedFactor;
+  R.distance += R.speed * 0.02;
+  R.scroll += R.speed;
+  R.runPhase += R.speed * 0.06;
+  var i, o;
+  // Move world left.
+  for (i = 0; i < R.obstacles.length; i++) R.obstacles[i].x -= R.speed;
+  for (i = 0; i < R.coins.length; i++) R.coins[i].x -= R.speed;
+  R.obstacles = R.obstacles.filter(function (ob) { return ob.x + ob.w > -80; });
+  R.coins = R.coins.filter(function (c) { return !c.got && c.x > -40; });
+  updateParticles();
+  // Spawn the next chunk. Sawtooth difficulty: every 3rd chunk is a rest
+  // stretch (coins only, longer gap) between obstacle clusters.
+  R.spawnTimer--;
+  if (R.spawnTimer <= 0) {
+    var isRest = (R.spawnCount % 3 === 2);
+    if (isRest) {
+      R.coins = R.coins.concat(coinLine(1000, 380, 5));
+      R.spawnTimer = Math.max(55, 110 - R.level * 5) + 40;
+    } else {
+      var chunk = spawnPattern(R.spawnCount, 1000);
+      R.obstacles = R.obstacles.concat(chunk.obstacles);
+      R.coins = R.coins.concat(chunk.coins);
+      R.spawnTimer = Math.max(55, 110 - R.level * 5);
+      // Extra spike at higher levels (seeded PRNG only).
+      if (R.level >= 3 && randChance(RNG, Math.min(0.1 + R.level * 0.03, 0.4))) {
+        R.obstacles.push({ type: "spike", x: 1180, w: 40, h: 50 });
+      }
+    }
+    R.spawnCount++;
+  }
+  // Runner physics (fixed step, buffered jump + coyote inside stepRunner).
+  var wasGrounded = R.runner.grounded;
+  stepRunner(R.runner);
+  if (!wasGrounded && R.runner.grounded) spawnDust(R.runner.x + 22, GROUND_Y);
+  // Gap: landing (or standing) over a gap ends the run.
+  for (i = 0; i < R.obstacles.length; i++) {
+    o = R.obstacles[i];
+    if (o.type === "gap" && runnerFallsInGap(R.runner, o)) { crashRun(); return; }
+  }
+  // Spike / floating-block collision.
+  for (i = 0; i < R.obstacles.length; i++) {
+    if (hitsObstacle(R.runner, R.obstacles[i])) { crashRun(); return; }
+  }
+  // Coins.
+  for (i = 0; i < R.coins.length; i++) {
+    var c = R.coins[i];
+    if (!c.got && coinHit(R.runner, c)) {
+      c.got = true;
+      R.coinsRun += COIN_VALUE;
+      SAVE.coins += COIN_VALUE;
+      spawnSparkle(c.x, c.y);
+      AudioSys.coin();
+    }
+  }
+  // Level milestone: every 250m.
+  var newLevel = levelForDistance(R.distance);
+  if (newLevel > R.level) {
+    R.level = newLevel;
+    R.coinsRun += LEVEL_BONUS;
+    SAVE.coins += LEVEL_BONUS;
+    R.breather = 90; // brief speed breather after levelling up
+    showLevelBanner(newLevel);
+    AudioSys.levelUp();
+  }
+}
+
+/* =====================================================================
+   RENDERING — everything drawn in code (Canvas 2D, neon tunnel)
+   ===================================================================== */
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+function drawRunner() {
+  var r = R.runner;
+  var bob = r.grounded ? Math.sin(R.runPhase) * 3 : 0;
+  var x = r.x, y = r.y + bob;
+  // Legs (run cycle).
+  var legSwing = r.grounded ? Math.sin(R.runPhase) * 10 : 6;
+  ctx.strokeStyle = "#1e3a5f"; ctx.lineWidth = 7; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(x + 16, y + 44); ctx.lineTo(x + 16 + legSwing, y + 56); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x + 28, y + 44); ctx.lineTo(x + 28 - legSwing, y + 56); ctx.stroke();
+  // Body (glossy capsule).
+  var bg = ctx.createLinearGradient(x, y, x, y + 48);
+  bg.addColorStop(0, "#ff7ab8"); bg.addColorStop(0.5, "#f25c8a"); bg.addColorStop(1, "#c2275c");
+  ctx.fillStyle = bg;
+  roundRect(x + 6, y + 18, 32, 30, 12); ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,0.35)";
+  roundRect(x + 10, y + 21, 24, 8, 4); ctx.fill();
+  // Head.
+  var hg = ctx.createRadialGradient(x + 18, y + 8, 2, x + 22, y + 10, 15);
+  hg.addColorStop(0, "#ffe3c2"); hg.addColorStop(1, "#f2b879");
+  ctx.fillStyle = hg;
+  ctx.beginPath(); ctx.arc(x + 22, y + 10, 14, 0, Math.PI * 2); ctx.fill();
+  // Headband + eye.
+  ctx.strokeStyle = "#22d3ee"; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.arc(x + 22, y + 8, 13, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
+  ctx.fillStyle = "#141432";
+  ctx.beginPath(); ctx.arc(x + 28, y + 9, 2.5, 0, Math.PI * 2); ctx.fill();
+  // Arm.
+  ctx.strokeStyle = "#f2b879"; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.moveTo(x + 12, y + 26); ctx.lineTo(x + 2 - legSwing * 0.5, y + 36); ctx.stroke();
+}
+function drawCoin(c, t) {
+  var bobY = Math.sin(t * 0.08 + c.x * 0.05) * 3;
+  var g = ctx.createRadialGradient(c.x - 3, c.y + bobY - 4, 2, c.x, c.y + bobY, 13);
+  g.addColorStop(0, "#fff7cc"); g.addColorStop(0.5, "#ffd166"); g.addColorStop(1, "#f59e0b");
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(c.x, c.y + bobY, 12, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#b98a1d"; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = "#b98a1d"; ctx.font = "bold 13px system-ui, sans-serif";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("5", c.x, c.y + bobY + 1);
+}
+function drawSpike(o) {
+  var top = GROUND_Y - o.h;
+  var g = ctx.createLinearGradient(o.x, top, o.x, GROUND_Y);
+  g.addColorStop(0, "#ff8fa3"); g.addColorStop(0.5, "#ef4444"); g.addColorStop(1, "#991b1b");
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(o.x, GROUND_Y);
+  ctx.lineTo(o.x + o.w / 2, top);
+  ctx.lineTo(o.x + o.w, GROUND_Y);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = "#fca5a5"; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath(); ctx.arc(o.x + o.w / 2, top + 8, 3, 0, Math.PI * 2); ctx.fill();
+}
+function drawFloatBlock(o) {
+  var g = ctx.createLinearGradient(o.x, o.y, o.x, o.y + o.h);
+  g.addColorStop(0, "#c084fc"); g.addColorStop(1, "#7e22ce");
+  ctx.fillStyle = g;
+  roundRect(o.x, o.y, o.w, o.h, 8); ctx.fill();
+  ctx.strokeStyle = "#e9d5ff"; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = "#ffffff"; ctx.font = "bold 20px system-ui, sans-serif";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("!", o.x + o.w / 2, o.y + o.h / 2 + 1);
+}
+function render() {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  var t = R.scroll;
+  // Sky / tunnel background.
+  var bg = ctx.createLinearGradient(0, 0, 0, 600);
+  bg.addColorStop(0, "#0d0d2b"); bg.addColorStop(0.55, "#141432"); bg.addColorStop(1, "#1e1040");
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, 960, 600);
+  // Parallax stars (static when reduced motion is preferred).
+  ctx.fillStyle = "rgba(255,255,255,0.5)";
+  var i, sx;
+  for (i = 0; i < 40; i++) {
+    sx = ((i * 173) % 960 - (REDUCED ? 0 : t * 0.3)) % 960; if (sx < 0) sx += 960;
+    ctx.fillRect(sx, (i * 97) % 300 + 70, 2, 2);
+  }
+  // Tunnel walls: neon glow lines, top and bottom, scrolling dashes.
+  ctx.strokeStyle = "#22d3ee"; ctx.lineWidth = 3;
+  ctx.shadowColor = "#22d3ee"; ctx.shadowBlur = 12;
+  ctx.beginPath(); ctx.moveTo(0, 64); ctx.lineTo(960, 64); ctx.stroke();
+  ctx.strokeStyle = "#a855f7";
+  ctx.shadowColor = "#a855f7";
+  ctx.beginPath(); ctx.moveTo(0, 96); ctx.lineTo(960, 96); ctx.stroke();
+  ctx.shadowBlur = 0;
+  // Moving wall dashes (static when reduced motion is preferred).
+  ctx.strokeStyle = "rgba(34,211,238,0.5)"; ctx.lineWidth = 2;
+  for (i = 0; i < 12; i++) {
+    sx = ((i * 120 - (REDUCED ? 0 : t * 1.2)) % 1080 + 1080) % 1080 - 60;
+    ctx.beginPath(); ctx.moveTo(sx, 78); ctx.lineTo(sx + 40, 78); ctx.stroke();
+  }
+  // Floor: segments with gaps where gap obstacles are.
+  ctx.fillStyle = "#23234d";
+  ctx.fillRect(0, GROUND_Y, 960, 130);
+  ctx.fillStyle = "#2e2e63";
+  ctx.fillRect(0, GROUND_Y, 960, 6);
+  ctx.strokeStyle = "#22d3ee"; ctx.lineWidth = 3;
+  ctx.shadowColor = "#22d3ee"; ctx.shadowBlur = 10;
+  ctx.beginPath(); ctx.moveTo(0, GROUND_Y); ctx.lineTo(960, GROUND_Y); ctx.stroke();
+  ctx.shadowBlur = 0;
+  // Cut the gaps out of the floor.
+  for (i = 0; i < R.obstacles.length; i++) {
+    var o = R.obstacles[i];
+    if (o.type === "gap") {
+      ctx.fillStyle = "#070718";
+      ctx.fillRect(o.x, GROUND_Y, o.w, 130);
+      ctx.strokeStyle = "#ef4444"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(o.x, GROUND_Y); ctx.lineTo(o.x, GROUND_Y + 14); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(o.x + o.w, GROUND_Y); ctx.lineTo(o.x + o.w, GROUND_Y + 14); ctx.stroke();
+    }
+  }
+  // Floor chevrons scrolling (static when reduced motion is preferred).
+  ctx.fillStyle = "rgba(34,211,238,0.25)";
+  for (i = 0; i < 16; i++) {
+    sx = ((i * 90 - (REDUCED ? 0 : t)) % 1080 + 1080) % 1080 - 60;
+    ctx.beginPath();
+    ctx.moveTo(sx, 520); ctx.lineTo(sx + 18, 540); ctx.lineTo(sx, 560); ctx.lineTo(sx + 10, 540);
+    ctx.closePath(); ctx.fill();
+  }
+  // Coins.
+  for (i = 0; i < R.coins.length; i++) if (!R.coins[i].got) drawCoin(R.coins[i], t);
+  // Obstacles.
+  for (i = 0; i < R.obstacles.length; i++) {
+    o = R.obstacles[i];
+    if (o.type === "spike") drawSpike(o);
+    else if (o.type === "float") drawFloatBlock(o);
+  }
+  // Runner (hidden on the menu behind the overlay, drawn in play/pause/results).
+  if (R.state !== "menu") drawRunner();
+  // Particles (dust puffs, coin sparkles).
+  for (i = 0; i < R.particles.length; i++) {
+    var p = R.particles[i];
+    ctx.globalAlpha = Math.max(0, p.life / p.max);
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  // Level-up banner presentation (state lives in R.bannerFrames).
+  var banner = $("levelBanner");
+  if (R.bannerFrames > 0 && R.bannerLevel > 0) {
+    banner.textContent = "LEVEL " + R.bannerLevel + " UP! +" + LEVEL_BONUS + " COINS";
+    banner.classList.add("show");
+  } else banner.classList.remove("show");
+  // Distance watermark while running.
+  if (R.state === "playing" || R.state === "paused") {
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.font = "900 34px system-ui, sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(distanceScore(R.distance) + "m", 480, 110);
+  }
+  updateHUD();
+}
+
+/* =====================================================================
+   INPUT + BOOT
+   ===================================================================== */
+/* ---------- Input: ONE Pointer Events stream + a keys Set ----------
+   No separate mouse/touch handlers. Handlers only record; update() acts.
+   Coordinates convert via getBoundingClientRect + scale on every event. */
+var pointerDown = false, pointerStartY = 0, pointerEndY = 0, pointerStartT = 0;
+function pointerY(e) {
+  var rect = { left: 0, top: 0, width: 960, height: 600 };
+  try { if (canvas.getBoundingClientRect) rect = canvas.getBoundingClientRect(); } catch (err) {}
+  var scale = 600 / (rect.height || 600);
+  return (e.clientY - rect.top) * scale;
+}
+function bindUI() {
+  $("btnPlay").addEventListener("click", function () { AudioSys.ensure(); showTutorialOrStart(); });
+  $("btnTutorialStart").addEventListener("click", function () { finishTutorial(); });
+  $("btnRetry").addEventListener("click", function () { startRun(); });
+  $("btnMenu").addEventListener("click", function () { quitToMenu(); });
+  $("btnPause").addEventListener("click", function () {
+    if (R.state === "playing") pauseGame();
+    else if (R.state === "paused") resumeGame();
+  });
+  $("btnResume").addEventListener("click", function () { resumeGame(); });
+  $("btnRestartPause").addEventListener("click", function () { startRun(); });
+  $("btnQuitPause").addEventListener("click", function () { quitToMenu(); });
+  $("btnMute").addEventListener("click", function () { toggleMute(); });
+  $("btnClaimDaily").addEventListener("click", function () { claimDaily(); });
+  canvas.addEventListener("pointerdown", function (e) {
+    AudioSys.ensure(); // unlock audio on first gesture
+    try { if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId); } catch (err) {}
+    pointerDown = true;
+    pointerStartY = pointerY(e); pointerEndY = pointerStartY;
+    pointerStartT = Date.now();
+  });
+  canvas.addEventListener("pointermove", function (e) {
+    if (pointerDown) pointerEndY = pointerY(e);
+  });
+  canvas.addEventListener("pointerup", function (e) {
+    if (!pointerDown) return;
+    pointerDown = false;
+    pointerEndY = pointerY(e);
+    var dy = pointerStartY - pointerEndY, dt = Date.now() - pointerStartT;
+    if (dy > 24 || dt < 300) doJump(); // swipe-up or quick tap = jump (buffered)
+  });
+  canvas.addEventListener("pointercancel", function () { pointerDown = false; });
+  document.addEventListener("keydown", function (e) {
+    if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyP") {
+      if (e.preventDefault) e.preventDefault();
+      keys.add(e.code); // recorded only — update() acts on the Set
+    }
+  });
+  document.addEventListener("keyup", function (e) { keys.delete(e.code); });
+  document.addEventListener("visibilitychange", function () {
+    // Auto-pause: a runner that keeps running while the tab is hidden is unfair.
+    if (document.visibilityState === "hidden") {
+      if (R.state === "playing") pauseGame();
+    }
+    LAST_TS = 0; ACC = 0; // reset time baseline + zero accumulator on return
+  });
+}
+/* ---------- Fixed-timestep loop (60 Hz accumulator) ----------
+   Frame delta clamped to <=250ms BEFORE accumulating; update() mutates
+   state only, render() draws only. */
+var ACC = 0, LAST_TS = 0;
+function updateStep() {
+  if (R.state === "playing") stepFrame();
+  else menuKeyEdge();
+}
+function tick(ts) {
+  if (typeof ts !== "number") ts = Date.now();
+  if (LAST_TS === 0) { LAST_TS = ts; render(); return; }
+  var dt = ts - LAST_TS;
+  LAST_TS = ts;
+  if (dt < 0) dt = 0;
+  if (dt > 250) dt = 250; // clamp before accumulating
+  ACC += dt;
+  var step = 1000 / 60, n = 0;
+  while (ACC >= step && n < 5) { updateStep(); ACC -= step; n++; }
+  if (n === 5) ACC = 0;
+  render();
+}
+function loop(ts) {
+  tick(ts);
+  requestAnimationFrame(loop);
+}
+function boot() {
+  loadSave();
+  RNG = mulberry32(SAVE.seed);
+  AudioSys.userMuted = !!SAVE.muted;
+  bindUI();
+  updateMenu();
+  updateHUD();
+  window.__state = R.state;
+  render();
+  window.__gameReady = true;
+  requestAnimationFrame(loop);
+}
+boot();
+
+/* Test hooks (used by boot_test.js only). */
+window.__TunnelTest = {
+  SAVE: SAVE, R: R, keys: keys, RNG: RNG, REDUCED: REDUCED,
+  startRun: startRun, doJump: doJump,
+  stepFrame: stepFrame, tick: tick, setState: setState,
+  crashRun: crashRun, claimDaily: claimDaily,
+  toggleMute: toggleMute, pauseGame: pauseGame, resumeGame: resumeGame,
+  quitToMenu: quitToMenu, showTutorialOrStart: showTutorialOrStart,
+  finishTutorial: finishTutorial,
+  speedForDistance: speedForDistance, levelForDistance: levelForDistance,
+  rankForDistance: rankForDistance, nextLevelAt: nextLevelAt,
+  todayStr: todayStr, render: render
+};
+</script>
+</body>
+</html>
