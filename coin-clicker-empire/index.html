@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Coin Clicker Empire</title>
+<!--
+  Coin Clicker Empire — original HTML5 idle clicker game.
+  100% code-drawn (Canvas 2D + CSS), no images, no audio files, no other
+  external resources. No SDK, no ads, no external URLs at all — the file is
+  fully self-contained.
+
+  How to play:
+    - Tap the big gold coin (or press Space) to earn coins. Base 1 coin per
+      click, multiplied by Click Power and Golden Touch upgrades.
+    - Spend coins in the shop: Auto-Clicker, Super Auto-Clicker and Coin
+      Factory earn coins per second automatically, even while you are away
+      (offline earnings, capped at 8 hours).
+
+  Architecture (skill rules):
+    - Scene machine: boot -> menu -> playing -> paused / milestone
+      (single string; side effects on enter/exit transitions only).
+    - Fixed-timestep loop (60 Hz accumulator, frame delta clamped to
+      250 ms before accumulating); update() mutates state, render() draws.
+    - Seeded mulberry32 PRNG for ALL gameplay randomness (seed stored in
+      the save); never unseeded randomness. window.__gameReady = true
+      after bootstrap; window.__state = current scene.
+    - One Pointer Events stream, DPR backing store + setTransform,
+      uniform scale-to-fit with letterbox, resize re-runs on window resize.
+    - Versioned save (v1, migration ladder) with storage injected into
+      the pure-logic save functions for testability.
+    - A golden coin appears every 45-90s for 8s: tap it for a bonus worth
+      60s of your current coins/sec (minimum 25 coins).
+    - Lifetime coins raise your rank: Bronze -> Silver -> Gold -> Platinum
+      -> Diamond -> Tycoon. Each rank-up pays a coin bonus.
+    - Daily bonus: claim once a day; consecutive days grow the streak and
+      the reward (100 coins x streak).
+    - Progress saves to localStorage (key "clickerempire_save_v1") on every
+      purchase and every 5 seconds. Sounds are tiny WebAudio oscillator
+      tones (no audio files) with a mute toggle.
+
+  Submission notes:
+    - Progress Save: Yes (localStorage only)
+    - Orientation: portrait-first, canvas 960x600 letterboxed
+    - Category: Idle / Clicker
+    - Language: English only. No fullscreen button, no preloader blocking
+      play, no cross-promotion, no external links.
+    - Size target: well under 1MB single file.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: #171204;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    color: #ffffff;
+    user-select: none;
+    -webkit-user-select: none;
+    overflow: hidden;
+  }
+  #wrap { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
+  #game {
+    position: relative;
+    width: min(100vw, 160vh);
+    height: min(100vh, 62.5vw);
+    aspect-ratio: 16 / 10;
+    max-width: 960px; max-height: 600px;
+    background: #241b06;
+    overflow: hidden;
+    border-radius: 8px;
+  }
+  #gameCanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: pointer; }
+  #gameCanvas:focus { outline: 3px solid #ffd700; outline-offset: -3px; }
+  .hidden { display: none !important; }
+  /* ---------- HUD ---------- */
+  #hud {
+    position: absolute; top: 0; left: 0; right: 0; height: 64px;
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px;
+    background: rgba(20, 14, 2, 0.78);
+    border-bottom: 1px solid rgba(255, 215, 0, 0.25);
+    z-index: 5;
+  }
+  .stat { min-width: 86px; }
+  .stat .lbl { font-size: 11px; letter-spacing: 1px; color: #d8c27a; text-transform: uppercase; }
+  .stat .val { font-size: 20px; font-weight: 800; line-height: 1.15; color: #ffe27a; }
+  #rankWrap { flex: 1; min-width: 130px; }
+  #rankText { font-size: 14px; color: #f5e6b8; margin-bottom: 4px; }
+  #rankText b { color: #ffd700; }
+  #rankBar { height: 10px; background: #3a2d08; border-radius: 6px; overflow: hidden; }
+  #rankFill { height: 100%; width: 0%; background: linear-gradient(90deg, #ffb700, #ffe27a, #fff3b0); border-radius: 6px; transition: width 0.3s; }
+  .hbtn {
+    border: none; border-radius: 10px; padding: 9px 12px;
+    font-size: 14px; font-weight: 800; color: #3a2a00; cursor: pointer;
+    background: linear-gradient(180deg, #ffe27a, #f5b301);
+    box-shadow: 0 3px 0 #a67c00, 0 4px 10px rgba(0,0,0,0.45);
+  }
+  .hbtn:active { transform: translateY(2px); box-shadow: 0 1px 0 #a67c00; }
+  .hbtn:disabled { filter: grayscale(0.7); opacity: 0.55; cursor: default; }
+  /* ---------- Shop ---------- */
+  #shop {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 5;
+    display: flex; gap: 8px; padding: 10px 12px 12px;
+    background: rgba(20, 14, 2, 0.82);
+    border-top: 1px solid rgba(255, 215, 0, 0.25);
+  }
+  .shopBtn {
+    flex: 1; border: 2px solid #6b5312; border-radius: 12px; padding: 8px 6px;
+    background: linear-gradient(180deg, #3a2d08, #241b06);
+    color: #fff; cursor: pointer; text-align: center; min-width: 0;
+    box-shadow: 0 3px 8px rgba(0,0,0,0.4);
+  }
+  .shopBtn:active { transform: translateY(2px); }
+  .shopBtn.afford { border-color: #ffd700; background: linear-gradient(180deg, #5a4510, #33270a); }
+  .shopBtn .nm { font-size: 14px; font-weight: 800; color: #ffe27a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .shopBtn .ds { font-size: 11px; color: #d8c27a; margin: 2px 0; }
+  .shopBtn .cs { font-size: 14px; font-weight: 800; color: #ffffff; }
+  .shopBtn .ow { font-size: 11px; color: #9fd6a0; }
+  .shopBtn.cant .cs { color: #8a7a52; }
+  /* ---------- Overlays ---------- */
+  .overlay {
+    position: absolute; inset: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(10, 7, 0, 0.72);
+  }
+  .card {
+    width: min(520px, 88%);
+    background: linear-gradient(180deg, #3a2d08, #241b06);
+    border: 2px solid #ffd700; border-radius: 18px;
+    padding: 26px 24px; text-align: center;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+  }
+  .card h1 { font-size: 30px; color: #ffd700; margin-bottom: 10px; }
+  .card h2 { font-size: 24px; color: #ffd700; margin-bottom: 10px; }
+  .card p { font-size: 16px; line-height: 1.5; color: #f5e6b8; margin-bottom: 12px; }
+  .card .big { font-size: 22px; font-weight: 800; color: #ffe27a; }
+  .bigBtn {
+    border: none; border-radius: 12px; padding: 13px 30px;
+    font-size: 18px; font-weight: 800; color: #3a2a00; cursor: pointer;
+    background: linear-gradient(180deg, #ffe27a, #f5b301);
+    box-shadow: 0 4px 0 #a67c00, 0 6px 14px rgba(0,0,0,0.45);
+    margin-top: 6px;
+  }
+  .bigBtn:active { transform: translateY(2px); box-shadow: 0 2px 0 #a67c00; }
+  #tutDots { font-size: 18px; letter-spacing: 6px; color: #ffd700; margin-bottom: 8px; }
+  #hintBar {
+    position: absolute; left: 50%; bottom: 168px; transform: translateX(-50%);
+    z-index: 4; padding: 8px 16px; border-radius: 20px;
+    background: rgba(20, 14, 2, 0.8); border: 1px solid rgba(255,215,0,0.4);
+    font-size: 15px; font-weight: 700; color: #ffe27a; white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="game">
+    <canvas id="gameCanvas" width="960" height="600" tabindex="0" aria-label="Coin Clicker Empire game canvas. Press Space or tap the big coin to earn coins."></canvas>
+    <div id="liveRegion" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);"></div>
+
+    <div id="hud">
+      <div class="stat"><div class="lbl">Coins</div><div class="val" id="hudCoins">0</div></div>
+      <div class="stat"><div class="lbl">Per sec</div><div class="val" id="hudCps">0</div></div>
+      <div class="stat"><div class="lbl">Per click</div><div class="val" id="hudClick">1</div></div>
+      <div class="stat"><div class="lbl">Lifetime</div><div class="val" id="hudLifetime">0</div></div>
+      <div id="rankWrap">
+        <div id="rankText">Rank: <b id="hudRank">Bronze</b> &nbsp; <span id="rankNext">Next rank: Silver at 1,000 lifetime coins</span></div>
+        <div id="rankBar"><div id="rankFill"></div></div>
+      </div>
+      <button class="hbtn" id="btnDaily">Daily Bonus</button>
+      <button class="hbtn" id="btnPause">Pause</button>
+      <button class="hbtn" id="btnMute">Sound: On</button>
+    </div>
+
+    <div id="hintBar">Tap the big coin to earn coins!</div>
+
+    <div id="shop">
+      <button class="shopBtn" id="btnBuyAuto">
+        <div class="nm">Auto-Clicker</div><div class="ds">+1 coin/sec each</div>
+        <div class="cs" id="costAuto">15 coins</div><div class="ow" id="ownedAuto">Owned: 0</div>
+      </button>
+      <button class="shopBtn" id="btnBuySuper">
+        <div class="nm">Super Auto</div><div class="ds">+8 coins/sec each</div>
+        <div class="cs" id="costSuper">100 coins</div><div class="ow" id="ownedSuper">Owned: 0</div>
+      </button>
+      <button class="shopBtn" id="btnBuyFactory">
+        <div class="nm">Coin Factory</div><div class="ds">+47 coins/sec each</div>
+        <div class="cs" id="costFactory">1,100 coins</div><div class="ow" id="ownedFactory">Owned: 0</div>
+      </button>
+      <button class="shopBtn" id="btnBuyClick">
+        <div class="nm">Click Power</div><div class="ds">Doubles coins per click</div>
+        <div class="cs" id="costClick">50 coins</div><div class="ow" id="ownedClick">Level: 0</div>
+      </button>
+      <button class="shopBtn" id="btnBuyTouch">
+        <div class="nm">Golden Touch</div><div class="ds">+25% to ALL earnings</div>
+        <div class="cs" id="costTouch">500 coins</div><div class="ow" id="ownedTouch">Level: 0</div>
+      </button>
+    </div>
+
+    <div id="tutorialOverlay" class="overlay hidden">
+      <div class="card">
+        <h1>Welcome to Coin Clicker Empire!</h1>
+        <div id="tutDots">&#9679;&#9675;&#9675;</div>
+        <p id="tutText">Step 1: Tap the big gold coin (or press Space) to earn coins.</p>
+        <button class="bigBtn" id="btnTutNext">Next</button>
+      </div>
+    </div>
+
+    <div id="rankOverlay" class="overlay hidden">
+      <div class="card">
+        <h1>&#127942; Milestone reached!</h1>
+        <h2 id="rankTitle">Silver Rank!</h2>
+        <p id="rankStats">Lifetime coins: 1,000</p>
+        <p class="big" id="rankBonus">Bonus: +100 coins!</p>
+        <button class="bigBtn" id="btnRankContinue">Continue</button>
+      </div>
+    </div>
+
+    <div id="pauseOverlay" class="overlay hidden">
+      <div class="card">
+        <h2>Paused</h2>
+        <p>Take a break — your empire waits. Coins keep only when you play.</p>
+        <button class="bigBtn" id="btnResume">Resume</button>
+      </div>
+    </div>
+
+    <div id="offlineOverlay" class="overlay hidden">
+      <div class="card">
+        <h2>Welcome back!</h2>
+        <p id="offlineText">While you were away: +0 coins!</p>
+        <button class="bigBtn" id="btnOfflineOk">Collect</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+"use strict";
+// __PURE_LOGIC_START__
+// Pure game logic: no DOM, no canvas, no localStorage. tests.js extracts
+// this section and evals it, so keep every function below dependency-free.
+var SAVE_KEY = "clickerempire_save_v1";
+var OFFLINE_CAP_SECONDS = 8 * 3600;
+var GOLDEN_MIN_INTERVAL = 45;
+var GOLDEN_MAX_INTERVAL = 90;
+var GOLDEN_DURATION = 8;
+var SAVE_VERSION = 1;
+var DEFAULT_SEED = 20261118;
+
+// Seeded PRNG (mulberry32). ALL gameplay randomness flows through an
+// instance of this — never unseeded randomness — so runs are reproducible and
+// tests can fix the seed. The seed lives in the save.
+function mulberry32(seed) {
+  var a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    var t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function randomInRange(rng, min, max) { return min + rng() * (max - min); }
+function goldenInterval(rng) { return randomInRange(rng, GOLDEN_MIN_INTERVAL, GOLDEN_MAX_INTERVAL); }
+
+// Single-string scene machine: boot -> menu -> playing -> paused / milestone.
+var SCENES = ["boot", "menu", "playing", "paused", "milestone"];
+function isValidScene(s) { return SCENES.indexOf(s) !== -1; }
+
+var SHOP = {
+  auto:    { base: 15,   mult: 1.15, cps: 1 },
+  super:   { base: 100,  mult: 1.15, cps: 8 },
+  factory: { base: 1100, mult: 1.15, cps: 47 }
+};
+
+var RANKS = [
+  { name: "Bronze",   at: 0 },
+  { name: "Silver",   at: 1000 },
+  { name: "Gold",     at: 10000 },
+  { name: "Platinum", at: 100000 },
+  { name: "Diamond",  at: 1000000 },
+  { name: "Tycoon",   at: 10000000 }
+];
+var RANK_BONUS = [0, 100, 1000, 10000, 100000, 1000000];
+
+function costFor(base, mult, owned) {
+  return Math.ceil(base * Math.pow(mult, owned));
+}
+function shopCost(itemId, owned) {
+  var it = SHOP[itemId];
+  if (!it) return Infinity;
+  return costFor(it.base, it.mult, owned);
+}
+function clickPowerCost(level) { return Math.ceil(50 * Math.pow(2.2, level)); }
+function goldenTouchCost(level) { return Math.ceil(500 * Math.pow(3, level)); }
+function goldenTouchMult(level) { return 1 + 0.25 * level; }
+function coinsPerClick(state) {
+  return Math.pow(2, state.clickPower) * goldenTouchMult(state.goldenTouch);
+}
+function baseCps(state) {
+  return state.shop.auto * SHOP.auto.cps +
+         state.shop.super * SHOP.super.cps +
+         state.shop.factory * SHOP.factory.cps;
+}
+function coinsPerSec(state) {
+  return baseCps(state) * goldenTouchMult(state.goldenTouch);
+}
+function rankIndexForLifetime(lifetime) {
+  var idx = 0;
+  for (var i = 0; i < RANKS.length; i++) {
+    if (lifetime >= RANKS[i].at) idx = i;
+  }
+  return idx;
+}
+function rankForLifetime(lifetime) { return RANKS[rankIndexForLifetime(lifetime)].name; }
+function nextRankForLifetime(lifetime) {
+  var idx = rankIndexForLifetime(lifetime);
+  if (idx >= RANKS.length - 1) return null;
+  return { name: RANKS[idx + 1].name, at: RANKS[idx + 1].at, index: idx + 1 };
+}
+function rankBonusFor(index) { return RANK_BONUS[index] || 0; }
+function offlineEarnings(cps, secondsAway) {
+  if (cps <= 0 || secondsAway <= 0) return 0;
+  return Math.floor(cps * Math.min(secondsAway, OFFLINE_CAP_SECONDS));
+}
+function goldenCoinBonus(cps) {
+  return Math.max(25, Math.floor(cps * 60));
+}
+function dailyReward(streak) { return 100 * Math.max(1, streak); }
+function dateKey(d) {
+  var y = d.getFullYear();
+  var m = String(d.getMonth() + 1);
+  if (m.length < 2) m = "0" + m;
+  var day = String(d.getDate());
+  if (day.length < 2) day = "0" + day;
+  return y + "-" + m + "-" + day;
+}
+function isDailyAvailable(lastClaim, todayKey) {
+  return lastClaim !== todayKey;
+}
+function dailyStreakOnClaim(lastClaim, todayKey, prevLast, streak) {
+  if (lastClaim === todayKey) return streak;
+  if (prevLast) {
+    var prev = new Date(prevLast + "T12:00:00");
+    var today = new Date(todayKey + "T12:00:00");
+    var diffDays = Math.round((today - prev) / 86400000);
+    if (diffDays === 1) return streak + 1;
+  }
+  return 1;
+}
+function canAfford(coins, cost) { return coins >= cost; }
+function itemCost(state, itemId) {
+  if (itemId === "click") return clickPowerCost(state.clickPower);
+  if (itemId === "touch") return goldenTouchCost(state.goldenTouch);
+  return shopCost(itemId, state.shop[itemId]);
+}
+// Mutates state; returns {ok, cost}. False when unaffordable / unknown.
+function applyBuy(state, itemId) {
+  var cost = itemCost(state, itemId);
+  if (!isFinite(cost) || !canAfford(state.coins, cost)) return { ok: false, cost: cost };
+  state.coins -= cost;
+  if (itemId === "click") state.clickPower += 1;
+  else if (itemId === "touch") state.goldenTouch += 1;
+  else state.shop[itemId] += 1;
+  return { ok: true, cost: cost };
+}
+function defaultState() {
+  return {
+    version: SAVE_VERSION, seed: DEFAULT_SEED,
+    coins: 0, lifetime: 0,
+    shop: { auto: 0, super: 0, factory: 0 },
+    clickPower: 0, goldenTouch: 0, rank: 0,
+    dailyLast: "", dailyStreak: 0,
+    lastSeen: 0, tutorialSeen: false, muted: false
+  };
+}
+// Migration ladder: v0 saves (no version/seed fields) gain both.
+function migrateSave(o) {
+  if (!o || typeof o !== "object") return o;
+  if (typeof o.version !== "number") {
+    o.version = SAVE_VERSION;
+    if (typeof o.seed !== "number") o.seed = DEFAULT_SEED;
+  }
+  return o;
+}
+function serializeState(state) {
+  return JSON.stringify({
+    version: SAVE_VERSION, seed: state.seed,
+    coins: state.coins, lifetime: state.lifetime,
+    shop: state.shop, clickPower: state.clickPower,
+    goldenTouch: state.goldenTouch, rank: state.rank,
+    dailyLast: state.dailyLast, dailyStreak: state.dailyStreak,
+    lastSeen: state.lastSeen, tutorialSeen: state.tutorialSeen,
+    muted: state.muted
+  });
+}
+function deserializeState(json) {
+  var s = defaultState();
+  if (!json) return s;
+  var o;
+  try { o = JSON.parse(json); } catch (e) { return s; }
+  if (!o || typeof o !== "object") return s;
+  o = migrateSave(o);
+  if (typeof o.version === "number") s.version = o.version;
+  if (typeof o.seed === "number" && isFinite(o.seed)) s.seed = o.seed >>> 0;
+  if (typeof o.coins === "number" && isFinite(o.coins)) s.coins = Math.max(0, o.coins);
+  if (typeof o.lifetime === "number" && isFinite(o.lifetime)) s.lifetime = Math.max(0, o.lifetime);
+  if (o.shop && typeof o.shop === "object") {
+    if (typeof o.shop.auto === "number") s.shop.auto = Math.max(0, Math.floor(o.shop.auto));
+    if (typeof o.shop.super === "number") s.shop.super = Math.max(0, Math.floor(o.shop.super));
+    if (typeof o.shop.factory === "number") s.shop.factory = Math.max(0, Math.floor(o.shop.factory));
+  }
+  if (typeof o.clickPower === "number") s.clickPower = Math.max(0, Math.floor(o.clickPower));
+  if (typeof o.goldenTouch === "number") s.goldenTouch = Math.max(0, Math.floor(o.goldenTouch));
+  if (typeof o.rank === "number") s.rank = Math.max(0, Math.min(RANKS.length - 1, Math.floor(o.rank)));
+  if (typeof o.dailyLast === "string") s.dailyLast = o.dailyLast;
+  if (typeof o.dailyStreak === "number") s.dailyStreak = Math.max(0, Math.floor(o.dailyStreak));
+  if (typeof o.lastSeen === "number") s.lastSeen = o.lastSeen;
+  if (o.tutorialSeen === true) s.tutorialSeen = true;
+  if (o.muted === true) s.muted = true;
+  return s;
+}
+// Storage is injected as an argument so tests can pass a Map-backed fake;
+// every access is try/catch-guarded and returns a safe fallback.
+function saveToStorage(storage, state) {
+  try {
+    storage.setItem(SAVE_KEY, serializeState(state));
+    return true;
+  } catch (e) { return false; }
+}
+function loadFromStorage(storage) {
+  var raw = null;
+  try { raw = storage.getItem(SAVE_KEY); } catch (e) { raw = null; }
+  return deserializeState(raw);
+}
+function fmt(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(2).replace(/\.?0+$/, "") + "M";
+  if (n >= 10000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "k";
+  if (n >= 1000) return Math.floor(n).toLocaleString("en-US");
+  if (Number.isInteger(n)) return String(n);
+  return String(Math.floor(n * 10) / 10);
+}
+// __PURE_LOGIC_END__
+
+// ================= Game (DOM + canvas) =================
+var canvas = document.getElementById("gameCanvas");
+var ctx = canvas.getContext("2d");
+var W = 960, H = 600;
+var DPR = 1;
+// Single uniform scale-to-fit: the #game box letterboxes via aspect-ratio
+// CSS, and the canvas backing store is W x H x DPR with one setTransform.
+function resizeCanvas() {
+  try { DPR = window.devicePixelRatio || 1; } catch (e) { DPR = 1; }
+  canvas.width = W * DPR;
+  canvas.height = H * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+resizeCanvas();
+if (typeof window.addEventListener === "function") window.addEventListener("resize", resizeCanvas);
+
+// Reduced motion: gate shake / particles / flash behind this flag.
+var REDUCED_MOTION = false;
+try {
+  if (window.matchMedia) REDUCED_MOTION = !!window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+} catch (e) { REDUCED_MOTION = false; }
+
+var SAVE = defaultState();
+var G = {
+  scene: "boot",
+  coinX: 480, coinY: 245, coinR: 105,
+  squash: 1, squashV: 0, flash: 0,
+  popups: [], sparkles: [],
+  golden: null,            // {x, y, r, expiresAt}
+  nextGoldenIn: 60,
+  rng: mulberry32(DEFAULT_SEED),
+  tutorialStep: 0,
+  time: 0, acc: 0,
+  totalClicks: 0,
+  keys: new Set(), spaceUsed: false,
+  pointerPos: { x: 0, y: 0 },
+  lastLiveCoins: -1,
+  offlineEarned: 0
+};
+
+// ---------- Scene machine (single string; side effects on the boundary) ----------
+function setScene(next) {
+  if (!isValidScene(next) || next === G.scene) return;
+  var prev = G.scene;
+  // exit transitions
+  if (prev === "milestone") hide("rankOverlay");
+  if (prev === "paused") hide("pauseOverlay");
+  if (prev === "menu") { hide("tutorialOverlay"); hide("offlineOverlay"); }
+  G.scene = next;
+  window.__state = next;
+  // enter transitions
+  if (next === "menu") {
+    // Boot/menu enter: tutorial first, then the welcome-back note.
+    if (!SAVE.tutorialSeen) showTutorial();
+    else if (G.offlineEarned > 0) showOffline();
+    else setScene("playing");
+  } else if (next === "paused") {
+    show("pauseOverlay");
+  } else if (next === "milestone") {
+    show("rankOverlay");
+  }
+}
+function showOffline() {
+  el("offlineText").textContent = "While you were away: +" + fmt(G.offlineEarned) + " coins!";
+  show("offlineOverlay");
+}
+function onVisibilityChange(hidden) {
+  if (hidden) {
+    if (G.scene === "playing") setScene("paused"); // auto-pause
+  } else {
+    lastFrame = 0; G.acc = 0; // reset time baseline + zero accumulator on return
+  }
+}
+
+function loadSave() {
+  var storage = null;
+  try { storage = window.localStorage; } catch (e) { storage = null; }
+  SAVE = storage ? loadFromStorage(storage) : defaultState();
+  // A fresh save gets a per-player seed (boot-time only, not gameplay RNG).
+  try {
+    var raw = storage ? storage.getItem(SAVE_KEY) : null;
+    if (!raw) SAVE.seed = (Date.now() % 2147483647) || 1;
+  } catch (e) { /* keep default seed */ }
+  G.rng = mulberry32(SAVE.seed || 1);
+  G.nextGoldenIn = goldenInterval(G.rng);
+  // Offline earnings: grant on load if auto-earners exist and time passed.
+  var cps = coinsPerSec(SAVE);
+  if (SAVE.lastSeen > 0 && cps > 0) {
+    var away = (Date.now() - SAVE.lastSeen) / 1000;
+    var earned = offlineEarnings(cps, away);
+    if (earned > 0) {
+      SAVE.coins += earned;
+      SAVE.lifetime += earned;
+      G.offlineEarned = earned;
+    }
+  }
+  SAVE.lastSeen = Date.now();
+  // Rank may have risen while away (no celebration overlay for offline gains).
+  var idx = rankIndexForLifetime(SAVE.lifetime);
+  if (idx > SAVE.rank) SAVE.rank = idx;
+}
+function persistSave() {
+  SAVE.lastSeen = Date.now();
+  try { saveToStorage(window.localStorage, SAVE); } catch (e) { /* storage unavailable: game still plays */ }
+}
+
+// ---------- Sound (WebAudio oscillators, no files) ----------
+var audioCtx = null;
+function ensureAudio() {
+  if (audioCtx) return audioCtx;
+  try {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    audioCtx = new AC();
+  } catch (e) { audioCtx = null; }
+  return audioCtx;
+}
+function tone(freq, dur, type, vol, when) {
+  if (SAVE.muted) return;
+  try {
+    var ac = ensureAudio();
+    if (!ac) return;
+    var o = ac.createOscillator();
+    var g = ac.createGain();
+    o.type = type || "sine";
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(vol || 0.15, ac.currentTime + (when || 0));
+    g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + (when || 0) + dur);
+    o.connect(g); g.connect(ac.destination);
+    o.start(ac.currentTime + (when || 0));
+    o.stop(ac.currentTime + (when || 0) + dur + 0.02);
+  } catch (e) { /* audio unavailable */ }
+}
+function unlockAudio() {
+  var ac = ensureAudio();
+  if (ac && ac.resume) {
+    try {
+      var r = ac.resume();
+      if (r && r.catch) r.catch(function () {});
+    } catch (e) { /* resume rejected: stay silent */ }
+  }
+}
+function sfxClick() { tone(880, 0.12, "sine", 0.12); tone(1320, 0.1, "sine", 0.07, 0.03); }
+function sfxBuy() { tone(523, 0.1, "triangle", 0.12); tone(659, 0.1, "triangle", 0.12, 0.08); tone(784, 0.16, "triangle", 0.14, 0.16); }
+function sfxRank() { [523, 659, 784, 1047].forEach(function (f, i) { tone(f, 0.22, "triangle", 0.2, i * 0.12); }); }
+function sfxGolden() { tone(1568, 0.15, "sine", 0.18); tone(2093, 0.2, "sine", 0.15, 0.07); }
+
+// ---------- UI helpers ----------
+function el(id) { return document.getElementById(id); }
+function show(id) { el(id).classList.remove("hidden"); }
+function hide(id) { el(id).classList.add("hidden"); }
+
+function updateHUD() {
+  el("hudCoins").textContent = fmt(SAVE.coins);
+  el("hudCps").textContent = fmt(coinsPerSec(SAVE));
+  el("hudClick").textContent = fmt(coinsPerClick(SAVE));
+  el("hudLifetime").textContent = fmt(SAVE.lifetime);
+  el("hudRank").textContent = RANKS[SAVE.rank].name;
+  var next = nextRankForLifetime(SAVE.lifetime);
+  if (next) {
+    el("rankNext").textContent = "Next rank: " + next.name + " at " + fmt(next.at) + " lifetime coins";
+    var cur = RANKS[SAVE.rank];
+    var pct = (SAVE.lifetime - cur.at) / (next.at - cur.at) * 100;
+    el("rankFill").style.width = Math.max(0, Math.min(100, pct)) + "%";
+  } else {
+    el("rankNext").textContent = "Max rank reached — Tycoon!";
+    el("rankFill").style.width = "100%";
+  }
+  el("btnMute").textContent = SAVE.muted ? "Sound: Off" : "Sound: On";
+  // aria-live: announce score/rank changes (only when the whole-coin count moves).
+  var whole = Math.floor(SAVE.coins);
+  if (whole !== G.lastLiveCoins) {
+    G.lastLiveCoins = whole;
+    var live = el("liveRegion");
+    if (live) live.textContent = "Coins: " + fmt(SAVE.coins) + ". Rank: " + RANKS[SAVE.rank].name + ". " + fmt(coinsPerSec(SAVE)) + " coins per second.";
+  }
+  var today = dateKey(new Date());
+  var dailyBtn = el("btnDaily");
+  if (isDailyAvailable(SAVE.dailyLast, today)) {
+    dailyBtn.disabled = false;
+    dailyBtn.textContent = "Daily Bonus" + (SAVE.dailyStreak > 0 ? " (streak " + SAVE.dailyStreak + ")" : "");
+  } else {
+    dailyBtn.disabled = true;
+    dailyBtn.textContent = "Daily claimed (streak " + SAVE.dailyStreak + ")";
+  }
+  updateShopUI();
+}
+function updateShopUI() {
+  var items = [
+    ["auto", "costAuto", "ownedAuto", "btnBuyAuto"],
+    ["super", "costSuper", "ownedSuper", "btnBuySuper"],
+    ["factory", "costFactory", "ownedFactory", "btnBuyFactory"],
+    ["click", "costClick", "ownedClick", "btnBuyClick"],
+    ["touch", "costTouch", "ownedTouch", "btnBuyTouch"]
+  ];
+  for (var i = 0; i < items.length; i++) {
+    var id = items[i][0];
+    var cost = itemCost(SAVE, id);
+    el(items[i][1]).textContent = fmt(cost) + " coins";
+    if (id === "click") el(items[i][2]).textContent = "Level: " + SAVE.clickPower;
+    else if (id === "touch") el(items[i][2]).textContent = "Level: " + SAVE.goldenTouch;
+    else el(items[i][2]).textContent = "Owned: " + SAVE.shop[id];
+    var btn = el(items[i][3]);
+    var afford = canAfford(SAVE.coins, cost);
+    if (afford) btn.classList.add("afford"); else btn.classList.remove("afford");
+    if (afford) btn.classList.remove("cant"); else btn.classList.add("cant");
+  }
+}
+
+// ---------- Core actions ----------
+function earn(amount) {
+  SAVE.coins += amount;
+  SAVE.lifetime += amount;
+  checkRankUp();
+}
+function clickCoin(x, y) {
+  if (G.scene !== "playing") return;
+  var val = coinsPerClick(SAVE);
+  earn(val);
+  G.totalClicks += 1;
+  // Layered juice within ~100ms: sound + squash overshoot + popup +
+  // sparkle burst + glow flash (motion-gated for reduced-motion users).
+  if (REDUCED_MOTION) { G.squash = 1; G.squashV = 0; }
+  else { G.squashV = -6; G.flash = 1; }
+  addPopup(x !== undefined ? x : G.coinX, y !== undefined ? y - 60 : G.coinY - 60, "+" + fmt(val));
+  burstSparkles(G.coinX, G.coinY, 8);
+  sfxClick();
+  updateHUD();
+}
+var SHOP_LABELS = { auto: "Auto-Clicker", super: "Super Auto", factory: "Coin Factory", click: "Click Power", touch: "Golden Touch" };
+function buy(itemId) {
+  if (G.scene !== "playing") return false;
+  var res = applyBuy(SAVE, itemId);
+  if (!res.ok) return false;
+  sfxBuy();
+  burstSparkles(G.coinX, G.coinY, 10);
+  addPopup(G.coinX, G.coinY - 120, "+1 " + (SHOP_LABELS[itemId] || itemId));
+  persistSave();
+  updateHUD();
+  return true;
+}
+function claimDaily() {
+  var today = dateKey(new Date());
+  if (!isDailyAvailable(SAVE.dailyLast, today)) return false;
+  var streak = dailyStreakOnClaim(SAVE.dailyLast, today, SAVE.dailyLast, SAVE.dailyStreak);
+  SAVE.dailyStreak = streak;
+  SAVE.dailyLast = today;
+  var reward = dailyReward(streak);
+  earn(reward);
+  addPopup(G.coinX, G.coinY - 90, "Daily +" + fmt(reward));
+  sfxBuy();
+  persistSave();
+  updateHUD();
+  return true;
+}
+function checkRankUp() {
+  if (G.scene !== "playing") return;
+  var idx = rankIndexForLifetime(SAVE.lifetime);
+  if (idx > SAVE.rank) {
+    SAVE.rank = idx;
+    var bonus = rankBonusFor(idx);
+    SAVE.coins += bonus;
+    SAVE.lifetime += bonus;
+    el("rankTitle").textContent = RANKS[idx].name + " Rank!";
+    el("rankStats").textContent = "Lifetime coins: " + fmt(SAVE.lifetime) + "  |  Coins: " + fmt(SAVE.coins);
+    el("rankBonus").textContent = "Bonus: +" + fmt(bonus) + " coins!";
+    sfxRank();
+    burstSparkles(G.coinX, G.coinY, 30);
+    persistSave();
+    updateHUD();
+    setScene("milestone"); // results-style celebration overlay scene
+  }
+}
+function spawnGoldenCoin() {
+  var x = 120 + G.rng() * (W - 240);
+  var y = 100 + G.rng() * 260;
+  G.golden = { x: x, y: y, r: 34, expiresAt: G.time + GOLDEN_DURATION };
+}
+function clickGoldenCoin() {
+  if (!G.golden) return false;
+  var bonus = goldenCoinBonus(coinsPerSec(SAVE));
+  earn(bonus);
+  addPopup(G.golden.x, G.golden.y - 30, "+" + fmt(bonus) + " GOLD!");
+  burstSparkles(G.golden.x, G.golden.y, 24);
+  G.golden = null;
+  G.nextGoldenIn = goldenInterval(G.rng);
+  sfxGolden();
+  persistSave();
+  updateHUD();
+  return true;
+}
+function tick(dt) {
+  // dt in seconds: idle accrual + golden coin timers.
+  if (dt > 0) {
+    var cps = coinsPerSec(SAVE);
+    if (cps > 0) {
+      var gained = cps * dt;
+      SAVE.coins += gained;
+      SAVE.lifetime += gained;
+      checkRankUp();
+    }
+    G.time += dt;
+    if (G.golden) {
+      if (G.time >= G.golden.expiresAt) {
+        G.golden = null;
+        G.nextGoldenIn = goldenInterval(G.rng);
+      }
+    } else {
+      G.nextGoldenIn -= dt;
+      if (G.nextGoldenIn <= 0) spawnGoldenCoin();
+    }
+  }
+  updateHUD();
+}
+
+// ---------- Popups / sparkles ----------
+function addPopup(x, y, text) {
+  G.popups.push({ x: x, y: y, text: text, life: 1 });
+  if (G.popups.length > 12) G.popups.shift();
+}
+function burstSparkles(x, y, n) {
+  if (REDUCED_MOTION) return; // particles gated behind prefers-reduced-motion
+  for (var i = 0; i < n; i++) {
+    var a = G.rng() * Math.PI * 2;
+    var sp = 40 + G.rng() * 90;
+    G.sparkles.push({ x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 30, life: 0.7 + G.rng() * 0.4 });
+  }
+  if (G.sparkles.length > 120) G.sparkles.splice(0, G.sparkles.length - 120);
+}
+
+// ---------- Tutorial ----------
+var TUT_STEPS = [
+  "Step 1: Tap the big gold coin (or press Space) to earn coins.",
+  "Step 2: Spend coins in the shop below — buy an Auto-Clicker so coins earn themselves!",
+  "Step 3: Watch your coins grow, grab golden coins, and climb the ranks to Tycoon!"
+];
+function showTutorial() {
+  G.tutorialStep = 0;
+  el("tutDots").textContent = "\u25CF\u25CB\u25CB";
+  el("tutText").textContent = TUT_STEPS[0];
+  el("btnTutNext").textContent = "Next";
+  show("tutorialOverlay");
+}
+function advanceTutorial() {
+  G.tutorialStep += 1;
+  if (G.tutorialStep >= TUT_STEPS.length) {
+    hide("tutorialOverlay");
+    SAVE.tutorialSeen = true;
+    persistSave();
+    // Menu exit: welcome-back note next (if any), else start playing.
+    if (G.offlineEarned > 0) showOffline();
+    else setScene("playing");
+    return;
+  }
+  var dots = ["\u25CF\u25CB\u25CB", "\u25CB\u25CF\u25CB", "\u25CB\u25CB\u25CF"];
+  el("tutDots").textContent = dots[G.tutorialStep];
+  el("tutText").textContent = TUT_STEPS[G.tutorialStep];
+  if (G.tutorialStep === TUT_STEPS.length - 1) el("btnTutNext").textContent = "Start Clicking!";
+}
+
+// ---------- Canvas drawing ----------
+function drawCoin(x, y, r, squash, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha === undefined ? 1 : alpha;
+  ctx.translate(x, y);
+  ctx.scale(2 - squash, squash);
+  var grad = ctx.createRadialGradient(-r * 0.3, -r * 0.35, r * 0.1, 0, 0, r);
+  grad.addColorStop(0, "#fff3b0");
+  grad.addColorStop(0.45, "#ffd700");
+  grad.addColorStop(0.8, "#f5b301");
+  grad.addColorStop(1, "#c88a00");
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = "#a67c00";
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.78, 0, Math.PI * 2);
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(166,124,0,0.7)";
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(-r * 0.25, -r * 0.3, r * 0.28, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(255,255,255,0.45)";
+  ctx.fill();
+  ctx.fillStyle = "#8a6500";
+  ctx.font = "bold " + Math.round(r * 0.95) + "px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("$", 0, r * 0.04);
+  ctx.restore();
+}
+function draw() {
+  var bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#2e2308");
+  bg.addColorStop(0.55, "#241b06");
+  bg.addColorStop(1, "#171204");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+  // faint background coins
+  ctx.save();
+  ctx.globalAlpha = 0.08;
+  drawCoin(120, 130, 34, 1, 1);
+  drawCoin(850, 150, 26, 1, 1);
+  drawCoin(880, 420, 40, 1, 1);
+  drawCoin(70, 400, 30, 1, 1);
+  ctx.restore();
+  // upward arrows (empire growth)
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,215,0,0.25)";
+  ctx.lineWidth = 6;
+  ctx.lineCap = "round";
+  var bob = Math.sin(G.time * 2) * 6;
+  ctx.beginPath();
+  ctx.moveTo(150, 470 + bob); ctx.lineTo(150, 420 + bob);
+  ctx.moveTo(138, 434 + bob); ctx.lineTo(150, 420 + bob); ctx.lineTo(162, 434 + bob);
+  ctx.moveTo(810, 470 + bob); ctx.lineTo(810, 420 + bob);
+  ctx.moveTo(798, 434 + bob); ctx.lineTo(810, 420 + bob); ctx.lineTo(822, 434 + bob);
+  ctx.stroke();
+  ctx.restore();
+  // golden coin event
+  if (G.golden) {
+    var pulse = 1 + Math.sin(G.time * 8) * 0.08;
+    var remain = Math.max(0, G.golden.expiresAt - G.time);
+    ctx.save();
+    ctx.globalAlpha = 0.5 + 0.5 * Math.min(1, remain / 2);
+    drawCoin(G.golden.x, G.golden.y, G.golden.r * pulse, 1, 1);
+    ctx.restore();
+    ctx.fillStyle = "#ffe27a";
+    ctx.font = "bold 15px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("GOLD! " + Math.ceil(remain) + "s", G.golden.x, G.golden.y + G.golden.r + 20);
+  }
+  // main coin with squash + idle bob + click glow flash (single decaying
+  // glow, never a strobe; skipped entirely under reduced motion)
+  var bobY = Math.sin(G.time * 1.6) * 4;
+  if (G.flash > 0 && !REDUCED_MOTION) {
+    ctx.save();
+    ctx.globalAlpha = G.flash * 0.35;
+    ctx.beginPath();
+    ctx.arc(G.coinX, G.coinY + bobY, G.coinR + 18, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffd700";
+    ctx.fill();
+    ctx.restore();
+  }
+  drawCoin(G.coinX, G.coinY + bobY, G.coinR, G.squash, 1);
+  ctx.fillStyle = "rgba(255,226,122,0.9)";
+  ctx.font = "bold 20px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("TAP!", G.coinX, G.coinY + bobY + G.coinR + 30);
+  // sparkles
+  for (var i = 0; i < G.sparkles.length; i++) {
+    var s = G.sparkles[i];
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, s.life);
+    ctx.fillStyle = "#ffe27a";
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  // popups
+  ctx.textAlign = "center";
+  for (var j = 0; j < G.popups.length; j++) {
+    var p = G.popups[j];
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.font = "bold 26px system-ui, sans-serif";
+    ctx.fillStyle = "#ffe27a";
+    ctx.strokeStyle = "rgba(0,0,0,0.6)";
+    ctx.lineWidth = 4;
+    ctx.strokeText(p.text, p.x, p.y);
+    ctx.fillText(p.text, p.x, p.y);
+    ctx.restore();
+  }
+}
+
+// ---------- Main loop: fixed 60 Hz timestep, render separated ----------
+// update() mutates state only; render() draws only.
+var STEP = 1 / 60;
+var lastFrame = 0;
+function update(dt) {
+  if (G.scene !== "playing") return; // paused / menu / milestone: frozen
+  // Keys are read inside update(), never acted on in the keydown handler.
+  if (G.keys.has("Space") && !G.spaceUsed) {
+    G.spaceUsed = true;
+    clickCoin();
+  }
+  if (!G.keys.has("Space")) G.spaceUsed = false;
+  // squash spring back to 1 (overshoot gives the pop its ease-out settle)
+  G.squashV += (1 - G.squash) * 220 * dt;
+  G.squashV *= Math.pow(0.0001, dt);
+  G.squash += G.squashV * dt;
+  if (G.squash < 0.7) G.squash = 0.7;
+  if (G.squash > 1.15) G.squash = 1.15;
+  if (G.flash > 0) G.flash = Math.max(0, G.flash - dt * 4);
+  // popups rise + fade (ease-out: rise slows as life drains)
+  for (var i = G.popups.length - 1; i >= 0; i--) {
+    G.popups[i].y -= 40 * dt * (0.4 + 0.6 * G.popups[i].life);
+    G.popups[i].life -= dt * 0.9;
+    if (G.popups[i].life <= 0) G.popups.splice(i, 1);
+  }
+  for (var j = G.sparkles.length - 1; j >= 0; j--) {
+    var s = G.sparkles[j];
+    s.x += s.vx * dt; s.y += s.vy * dt; s.vy += 120 * dt; s.life -= dt;
+    if (s.life <= 0) G.sparkles.splice(j, 1);
+  }
+  tick(dt); // idle accrual + golden-coin timers
+}
+function render() { draw(); }
+function frame(ts) {
+  var now = ts || 0;
+  var dt = 0;
+  if (lastFrame) dt = (now - lastFrame) / 1000;
+  lastFrame = now;
+  if (dt > 0.25) dt = 0.25; // clamp frame delta BEFORE accumulating
+  G.acc += dt;
+  var steps = 0;
+  while (G.acc >= STEP && steps < 5) { update(STEP); G.acc -= STEP; steps++; }
+  if (steps === 5) G.acc = 0; // spiral-of-death guard
+  render();
+  try { requestAnimationFrame(frame); } catch (e) { /* no rAF in test env */ }
+}
+
+// ---------- Input: ONE Pointer Events stream ----------
+// No separate mouse/touch handlers. Coords convert via getBoundingClientRect
+// + the uniform scale factor on every event.
+function canvasPos(evt) {
+  var rect = canvas.getBoundingClientRect();
+  var cx = (evt.clientX - rect.left) * (W / rect.width);
+  var cy = (evt.clientY - rect.top) * (H / rect.height);
+  return { x: cx, y: cy };
+}
+canvas.addEventListener("pointerdown", function (evt) {
+  unlockAudio(); // first gesture unlocks audio
+  try { if (canvas.setPointerCapture && evt.pointerId !== undefined) canvas.setPointerCapture(evt.pointerId); } catch (e) { /* capture unavailable */ }
+  var p = canvasPos(evt);
+  G.pointerPos = p;
+  if (G.scene !== "playing") return;
+  if (G.golden) {
+    var gd = Math.hypot(p.x - G.golden.x, p.y - G.golden.y);
+    if (gd <= G.golden.r + 12) { clickGoldenCoin(); return; }
+  }
+  var d = Math.hypot(p.x - G.coinX, p.y - G.coinY);
+  if (d <= G.coinR + 16) clickCoin(p.x, p.y);
+});
+canvas.addEventListener("pointermove", function (evt) { G.pointerPos = canvasPos(evt); });
+canvas.addEventListener("pointerup", function (evt) { G.pointerPos = canvasPos(evt); });
+document.addEventListener("keydown", function (evt) {
+  if (evt.code === "Space" || evt.key === " ") {
+    if (evt.preventDefault) evt.preventDefault();
+    G.keys.add("Space");
+  } else if (evt.code) {
+    G.keys.add(evt.code);
+  }
+});
+document.addEventListener("keyup", function (evt) {
+  if (evt.code === "Space" || evt.key === " ") G.keys.delete("Space");
+  else if (evt.code) G.keys.delete(evt.code);
+});
+document.addEventListener("visibilitychange", function () {
+  var hid = false;
+  try { hid = !!document.hidden; } catch (e) { hid = false; }
+  onVisibilityChange(hid);
+});
+
+// ---------- Wire buttons ----------
+el("btnBuyAuto").addEventListener("click", function () { buy("auto"); });
+el("btnBuySuper").addEventListener("click", function () { buy("super"); });
+el("btnBuyFactory").addEventListener("click", function () { buy("factory"); });
+el("btnBuyClick").addEventListener("click", function () { buy("click"); });
+el("btnBuyTouch").addEventListener("click", function () { buy("touch"); });
+el("btnDaily").addEventListener("click", function () { claimDaily(); });
+el("btnPause").addEventListener("click", function () {
+  if (G.scene === "playing") setScene("paused");
+});
+el("btnResume").addEventListener("click", function () { setScene("playing"); });
+el("btnMute").addEventListener("click", function () {
+  SAVE.muted = !SAVE.muted;
+  persistSave();
+  updateHUD();
+});
+el("btnTutNext").addEventListener("click", function () { advanceTutorial(); });
+el("btnRankContinue").addEventListener("click", function () {
+  setScene("playing");
+  checkRankUp(); // in case one click crossed two rank thresholds
+});
+el("btnOfflineOk").addEventListener("click", function () { setScene("playing"); });
+
+// ---------- Boot ----------
+loadSave();
+updateHUD();
+setScene("menu"); // boot -> menu (tutorial / welcome-back) -> playing
+try { setInterval(function () { persistSave(); }, 5000); } catch (e) { /* timers unavailable */ }
+try { requestAnimationFrame(frame); } catch (e) { /* no rAF in test env */ }
+window.__gameReady = true;
+window.__state = G.scene;
+
+window.__ClickerTest = {
+  G: G, SAVE: SAVE,
+  clickCoin: clickCoin, buy: buy, tick: tick,
+  spawnGoldenCoin: spawnGoldenCoin, clickGoldenCoin: clickGoldenCoin,
+  claimDaily: claimDaily, checkRankUp: checkRankUp,
+  loadSave: loadSave, persistSave: persistSave,
+  coinsPerClick: coinsPerClick, coinsPerSec: coinsPerSec,
+  rankForLifetime: rankForLifetime, nextRankForLifetime: nextRankForLifetime,
+  fmt: fmt, advanceTutorial: advanceTutorial, showTutorial: showTutorial,
+  setScene: setScene, update: update, render: render,
+  onVisibilityChange: onVisibilityChange, resizeCanvas: resizeCanvas,
+  SAVE_KEY: SAVE_KEY, REDUCED_MOTION: REDUCED_MOTION
+};
+</script>
+</body>
+</html>
