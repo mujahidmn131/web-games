@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Word Quest Daily</title>
+<!--
+  Word Quest Daily — original HTML5 word puzzle game. Plain single-file build.
+  100% code-drawn (Canvas 2D + CSS), no images, no audio files, no external
+  URLs at all — the file is fully self-contained. No SDK, no ads, no
+  frameworks, no fetch, no external resources.
+
+  Game: Wordle-style daily word puzzle. Guess the 5-letter word in 6 tries.
+  Green = right letter, right spot. Yellow = right letter, wrong spot.
+  Grey = not in the word. Duplicate letters follow the standard rule:
+  greens counted first, then yellows only up to the answer's letter count.
+  Daily word is date-seeded (same word for everyone on the same day).
+  Practice mode uses a seeded PRNG (mulberry32) — no unseeded randomness in
+  gameplay. Save key: "wordquest_save_v1" (versioned, localStorage only).
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: #07130c;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    color: #ffffff;
+    user-select: none; -webkit-user-select: none;
+    overflow: hidden;
+  }
+  #wrap { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
+  #game {
+    position: relative;
+    width: min(100vw, 160vh);
+    height: min(100vh, 62.5vw);
+    aspect-ratio: 16 / 10;
+    max-width: 960px; max-height: 600px;
+    background: linear-gradient(180deg, #0d2b1a 0%, #07130c 100%);
+    overflow: hidden; border-radius: 8px;
+  }
+  #boardCanvas {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    display: block; touch-action: none; cursor: pointer; outline: none;
+  }
+  #boardCanvas:focus-visible { outline: 3px solid #ffd166; outline-offset: -3px; }
+  #hud {
+    position: absolute; top: 0; left: 0; right: 0; height: 56px;
+    display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+    background: rgba(7, 19, 12, 0.78); border-bottom: 1px solid rgba(255,255,255,0.10);
+    z-index: 5;
+  }
+  .stat { min-width: 64px; }
+  .stat .lbl { font-size: 11px; letter-spacing: 1px; color: #9fc3a8; text-transform: uppercase; }
+  .stat .val { font-size: 19px; font-weight: 800; line-height: 1.1; }
+  #hudTitle { flex: 1; text-align: center; font-size: 20px; font-weight: 900; letter-spacing: 3px; color: #ffd166; }
+  .btn {
+    font-family: inherit; font-size: 15px; font-weight: 800; color: #08210f;
+    background: linear-gradient(180deg, #ffd166, #f4a900);
+    border: none; border-radius: 10px; padding: 9px 14px; cursor: pointer;
+    box-shadow: 0 3px 0 rgba(0,0,0,0.35), 0 4px 10px rgba(0,0,0,0.35);
+  }
+  .btn:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(0,0,0,0.35); }
+  .btn.secondary { background: linear-gradient(180deg, #e8f5e9, #b7d9bd); }
+  .btn.ghost { background: rgba(255,255,255,0.12); color: #fff; box-shadow: none; border: 1px solid rgba(255,255,255,0.25); }
+  .btn:disabled, .btn.disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn.small { font-size: 13px; padding: 7px 10px; }
+  .overlay {
+    position: absolute; inset: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(4, 12, 7, 0.82);
+  }
+  .overlay.hidden, .hidden { display: none !important; }
+  .card {
+    width: min(560px, 92%);
+    max-height: 92%; overflow-y: auto;
+    background: linear-gradient(180deg, #14401f, #0b2413);
+    border: 1px solid rgba(255,255,255,0.16); border-radius: 16px;
+    padding: 22px 24px; text-align: center;
+    box-shadow: 0 18px 50px rgba(0,0,0,0.6);
+  }
+  .card h1 { font-size: 30px; letter-spacing: 2px; color: #ffd166; margin-bottom: 6px; }
+  .card h2 { font-size: 22px; color: #ffd166; margin-bottom: 8px; }
+  .card p { font-size: 15px; line-height: 1.5; color: #dcefe0; margin: 8px 0; }
+  .card .sub { font-size: 13px; color: #9fc3a8; }
+  .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin: 12px 0; }
+  .chip {
+    background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 10px; padding: 8px 12px; font-size: 14px; min-width: 96px;
+  }
+  .chip b { display: block; font-size: 19px; color: #ffd166; }
+  .distRow { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 13px; text-align: left; }
+  .distRow .n { width: 14px; }
+  .distBar { height: 16px; background: #6aaa64; border-radius: 4px; min-width: 18px; color: #fff; font-size: 12px; line-height: 16px; padding-left: 6px; }
+  #toast {
+    position: absolute; top: 66px; left: 50%; transform: translateX(-50%);
+    background: #f8f8f8; color: #111; font-weight: 800; font-size: 15px;
+    padding: 8px 16px; border-radius: 8px; z-index: 8; box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+  }
+  #liveRegion { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .tutStep { text-align: left; background: rgba(255,255,255,0.06); border-radius: 10px; padding: 10px 12px; margin: 8px 0; font-size: 15px; line-height: 1.45; }
+  .tutStep b { color: #ffd166; }
+  #shareText { background: rgba(0,0,0,0.35); border-radius: 8px; padding: 10px; font-size: 14px; white-space: pre-line; word-break: break-word; margin: 10px 0; }
+  .kbd-hint { font-size: 12px; color: #9fc3a8; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="game">
+    <canvas id="boardCanvas" width="960" height="600" tabindex="0" aria-label="Word Quest Daily game board. Use the on-screen keyboard or your physical keyboard to type a five letter word, then press Enter."></canvas>
+    <div id="hud">
+      <div class="stat"><div class="lbl">Coins</div><div class="val" id="hudCoins">0</div></div>
+      <div class="stat"><div class="lbl">Streak</div><div class="val" id="hudStreak">0</div></div>
+      <div class="stat"><div class="lbl">Rank</div><div class="val" id="hudRank" style="font-size:15px;line-height:1.4">Word Rookie</div></div>
+      <div id="hudTitle">WORD QUEST</div>
+      <button class="btn small ghost" id="btnHint" title="Reveal a letter (10 coins)">Hint (10)</button>
+      <button class="btn small ghost" id="btnSound" title="Sound on/off">Sound: On</button>
+      <button class="btn small ghost" id="btnMenu" title="Back to menu">Menu</button>
+    </div>
+    <div id="toast" class="hidden"></div>
+    <div id="liveRegion" aria-live="polite"></div>
+
+    <div class="overlay" id="menuOverlay">
+      <div class="card">
+        <h1>WORD QUEST DAILY</h1>
+        <p class="sub">Guess the 5-letter word in 6 tries. A new word every day.</p>
+        <div class="row">
+          <div class="chip">Streak<b id="menuStreak">0</b></div>
+          <div class="chip">Best streak<b id="menuBestStreak">0</b></div>
+          <div class="chip">Coins<b id="menuCoins">0</b></div>
+          <div class="chip">Rank<b id="menuRank">Word Rookie</b></div>
+        </div>
+        <div class="row">
+          <button class="btn" id="btnDaily">Play Daily</button>
+          <button class="btn secondary" id="btnPractice">Practice</button>
+          <button class="btn ghost" id="btnHow">How to Play</button>
+        </div>
+        <div class="row" id="dailyBonus">
+          <button class="btn" id="btnClaimDaily">Claim Daily Bonus</button>
+          <span class="sub" id="dailyBonusText" style="align-self:center"></span>
+        </div>
+        <p class="sub" id="menuDailyStatus"></p>
+        <div id="statsPanel" style="text-align:left;margin-top:8px">
+          <h2 style="text-align:center">Your Stats</h2>
+          <p style="text-align:center"><span id="menuPlayed">0</span> played &nbsp;•&nbsp; <span id="menuWins">0</span> wins &nbsp;•&nbsp; Win <span id="menuWinPct">0</span>%</p>
+          <div id="menuDist"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="overlay hidden" id="tutorialOverlay">
+      <div class="card">
+        <h2>How to Play</h2>
+        <div class="tutStep"><b>1.</b> Type a 5-letter word with the on-screen keyboard or your physical keyboard, then press Enter.</div>
+        <div class="tutStep"><b>2.</b> <span style="color:#6aaa64;font-weight:800">Green</span> = right letter, right spot. <span style="color:#c9b458;font-weight:800">Yellow</span> = right letter, wrong spot. <span style="color:#9a9a9a;font-weight:800">Grey</span> = not in the word.</div>
+        <div class="tutStep"><b>3.</b> You get 6 tries. Win the daily word to grow your streak and earn coins!</div>
+        <div class="row">
+          <button class="btn" id="btnTutGotIt">Got it!</button>
+          <button class="btn ghost" id="btnTutPlay">Play Now</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="overlay hidden" id="resultsOverlay">
+      <div class="card">
+        <h2 id="resultTitle">You got it!</h2>
+        <p id="resultWord"></p>
+        <p id="resultDetail"></p>
+        <div class="row">
+          <div class="chip">Streak<b id="resultStreak">0</b></div>
+          <div class="chip">Coins earned<b id="resultCoins">+0</b></div>
+          <div class="chip">Win %<b id="resultWinPct">0</b></div>
+        </div>
+        <div id="shareText"></div>
+        <div class="row">
+          <button class="btn small" id="btnCopyShare">Copy Share</button>
+          <span class="sub" id="copyStatus" style="align-self:center"></span>
+        </div>
+        <p class="sub" id="nextWordText"></p>
+        <div class="row">
+          <button class="btn" id="btnResultPractice">Practice</button>
+          <button class="btn secondary" id="btnResultMenu">Menu</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+"use strict";
+// __PURE_LOGIC_START__
+// Pure logic: no DOM, no canvas, no unseeded randomness. Testable in node via tests.js.
+// Storage is injected as an argument so tests can use a Map-backed fake.
+
+var SAVE_KEY = "wordquest_save_v1";
+var SAVE_VERSION = 1;
+var EPOCH_DATE = "2026-01-01"; // day 0 for the daily-word calendar
+var WORD_LEN = 5;
+var MAX_GUESSES = 6;
+var HINT_COST = 10;
+var HINTS_PER_GAME = 2;
+var DAILY_WIN_BASE = 20;
+var DAILY_WIN_PER_UNUSED = 5;
+var PRACTICE_WIN_COINS = 5;
+
+var WORDS = [
+"ABOUT","ABOVE","ABUSE","ACTOR","ACUTE","ADAPT","ADMIT","ADOPT","ADULT","AFTER",
+"AGAIN","AGENT","AGREE","AHEAD","ALARM","ALBUM","ALERT","ALIKE","ALIVE","ALLOW",
+"ALONE","ALONG","ALOUD","ALPHA","ALTAR","AMBER","AMEND","AMONG","AMUSE","ANGEL",
+"ANGLE","ANGRY","ANKLE","ANNOY","APART","APPLE","APPLY","APRON","ARENA","ARGUE",
+"ARISE","ARMOR","AROSE","ARROW","ASIDE","ASSET","ATLAS","AUDIO","AUDIT","AVOID",
+"AWAKE","AWARD","AWARE","AWFUL","BACON","BADGE","BADLY","BAGEL","BAKER","BASIC",
+"BASIN","BASIS","BATCH","BATHE","BEACH","BEARD","BEAST","BEAUT","BEGAN","BEGIN",
+"BEING","BELLY","BELOW","BENCH","BERRY","BIRTH","BLACK","BLADE","BLAME","BLANK",
+"BLAST","BLEND","BLESS","BLIND","BLOCK","BLOOD","BOARD","BOAST","BONUS","BOOST",
+"BOOTH","BOUND","BOXER","BRACE","BRAIN","BRAVE","BREAD","BREAK","BRICK","BRIDE",
+"BRIEF","BRING","BROAD","BROKE","BROOK","BROOM","BROWN","BRUSH","BUILD","BUNCH",
+"BURST","BUYER","CABIN","CABLE","CAMEL","CANAL","CANDY","CARGO","CARRY","CATCH",
+"CAUSE","CEASE","CHAIN","CHAIR","CHALK","CHAOS","CHARM","CHART","CHASE","CHEAP",
+"CHECK","CHEST","CHIEF","CHILD","CHILL","CIVIL","CLAIM","CLASS","CLEAN","CLEAR",
+"CLERK","CLICK","CLIFF","CLIMB","CLOCK","CLOSE","CLOTH","CLOUD","COACH","COAST",
+"COLOR","COMIC","COUCH","COUGH","COULD","COUNT","COURT","COVER","CRACK","CRAFT",
+"CRASH","CRAZY","CREAM","CRIME","CROSS","CROWD","CURVE","CYCLE","DAILY","DANCE",
+"DEATH","DELAY","DEVIL","DIARY","DOUBT","DOZEN","DRAFT","DRAIN","DRAMA","DREAM",
+"DRESS","DRINK","DRIVE","EAGER","EAGLE","EARLY","EARTH","EIGHT","ELBOW","ELDER",
+"ELECT","ELITE","EMAIL","EMPTY","ENEMY","ENJOY","ENTER","ENTRY","EQUAL","ERROR",
+"ESSAY","EVENT","EVERY","EXACT","EXIST","EXTRA","FAITH","FALSE","FANCY","FAULT",
+"FAVOR","FENCE","FIELD","FIFTH","FIFTY","FIGHT","FINAL","FIRST","FLAME","FLASH",
+"FLEET","FLESH","FLOAT","FLOOD","FLOOR","FOCUS","FORCE","FORTH","FOUND","FRAME",
+"FRESH","FRONT","FROST","FRUIT","FUNNY","GHOST","GIANT","GLASS","GLOVE","GRACE",
+"GRADE","GRAIN","GRAND","GRANT","GRAPE","GRAPH","GRASP","GRASS","GRAVE","GREAT",
+"GREEN","GREET","GRIEF","GROUP","GUARD","GUESS","GUEST","GUIDE","HABIT","HAPPY",
+"HEART","HEAVY","HELLO","HENCE","HOBBY","HONEY","HORSE","HOTEL","HOUSE","HUMAN",
+"HUMOR","HURRY","IMAGE","IMPLY","INDEX","INNER","INPUT","ISSUE","JEWEL","JOINT",
+"JUDGE","JUICE","KNIFE","KNOCK","LABEL","LABOR","LARGE","LAUGH","LAYER","LEARN",
+"LEAST","LEAVE","LEGAL","LEMON","LEVEL","LIGHT","LIMIT","LOCAL","LOGIC","LOOSE",
+"LUNCH","MAGIC","MAJOR","MARCH","MARRY","MATCH","MAYBE","MAYOR","MEDIA","METAL",
+"METER","MIGHT","MINOR","MODEL","MONEY","MONTH","MORAL","MOTOR","MOUNT","MOUSE",
+"MOUTH","MOVIE","MUSIC","NERVE","NEVER","NIGHT","NOBLE","NOISE","NORTH","NOVEL",
+"NURSE","OCEAN","OFFER","OFTEN","OPERA","ORDER","ORGAN","OTHER","OUTER","OWNER",
+"PAINT","PANEL","PANIC","PAPER","PARTY","PEACE","PHASE","PHONE","PHOTO","PIANO",
+"PIECE","PILOT","PITCH","PLACE","PLAIN","PLANE","PLANT","PLATE","POINT","POUND",
+"POWER","PRESS","PRICE","PRIDE","PRIME","PRINT","PRIOR","PRIZE","PROOF","PROUD",
+"PROVE","PULSE","PUPIL","QUEEN","QUICK","QUIET","QUITE","QUOTE","RADIO","RAISE",
+"RANGE","RAPID","RATIO","REACH","READY","REFER","RELAX","REPLY","RIGHT","RIVER",
+"ROUGH","ROUND","ROUTE","ROYAL","RURAL","SALAD","SCALE","SCARE","SCENE","SCOPE",
+"SCORE","SCRAP","SEIZE","SENSE","SERVE","SEVEN","SHADE","SHAKE","SHALL","SHAME",
+"SHAPE","SHARE","SHARP","SHEET","SHELF","SHELL","SHIFT","SHINE","SHIRT","SHOCK",
+"SHOOT","SHORE","SHORT","SHOUT","SIGHT","SILLY","SINCE","SKILL","SKIRT","SLEEP",
+"SLICE","SLIDE","SMALL","SMART","SMELL","SMILE","SMOKE","SNAKE","SOLID","SOLVE",
+"SORRY","SOUND","SOUTH","SPACE","SPARE","SPEAK","SPEED","SPELL","SPEND","SPILL",
+"SPITE","SPLIT","SPOKE","SPOON","SPORT","STAFF","STAGE","STAIR","STAKE","STAND",
+"START","STATE","STEAK","STEAL","STEAM","STEEL","STEEP","STEER","STICK","STILL",
+"STOCK","STONE","STORE","STORM","STORY","STOVE","STRIP","STUDY","STUFF","STYLE",
+"SUPER","SURGE","SWEAR","SWEAT","SWEEP","SWEET","SWING","TABLE","TASTE","TEACH",
+"TEETH","THANK","THEIR","THEME","THERE","THESE","THICK","THING","THINK","THIRD",
+"THOSE","THREE","THROW","THUMB","TIGHT","TIRED","TITLE","TODAY","TOOTH","TOPIC",
+"TOTAL","TOUCH","TOUGH","TOWER","TRACE","TRACK","TRADE","TRAIL","TRAIN","TREAT",
+"TREND","TRIAL","TRIBE","TRICK","TROOP","TRUCK","TRUST","TRUTH","TWICE","UNCLE",
+"UNDER","UNION","UNTIL","UPPER","UPSET","URBAN","USUAL","VALUE","VIDEO","VISIT",
+"VITAL","VOICE","WASTE","WATCH","WATER","WEIGH","WHEEL","WHERE","WHICH","WHILE",
+"WHITE","WHOLE","WHOSE","WOMAN","WORLD","WORRY","WORTH","WOULD","WOUND","WRITE",
+"WRONG","YIELD","YOUNG","YOUTH",
+];
+
+// ---- seeded PRNG (mulberry32) — ALL gameplay randomness goes through this ----
+function mulberry32(seed) {
+  var a = seed >>> 0;
+  return function () {
+    a = (a + 0x6D2B79F5) >>> 0;
+    var t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function hashString(s) {
+  var h = 2166136261 >>> 0;
+  for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+
+// ---- dates (UTC, YYYY-MM-DD) ----
+function parseDateStr(s) {
+  var p = String(s || "").split("-");
+  return Date.UTC(+p[0], (+p[1] || 1) - 1, +p[2] || 1);
+}
+function dateStrOfMs(ms) {
+  var d = new Date(ms);
+  var m = d.getUTCMonth() + 1, day = d.getUTCDate();
+  return d.getUTCFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (day < 10 ? "0" : "") + day;
+}
+function todayStr(nowMs) { return dateStrOfMs(nowMs == null ? Date.now() : nowMs); }
+function dayNumber(dateStr) {
+  return Math.floor((parseDateStr(dateStr) - parseDateStr(EPOCH_DATE)) / 86400000);
+}
+function dailyWord(dateStr) {
+  var n = dayNumber(dateStr);
+  var idx = ((n % WORDS.length) + WORDS.length) % WORDS.length;
+  return WORDS[idx];
+}
+function seededPracticeWord(seed) {
+  var rng = mulberry32(seed);
+  return WORDS[Math.floor(rng() * WORDS.length)];
+}
+
+// ---- guess evaluation: greens first, then yellows up to remaining counts ----
+function evaluateGuess(guess, answer) {
+  var g = String(guess || "").toUpperCase();
+  var a = String(answer || "").toUpperCase();
+  var res = ["grey", "grey", "grey", "grey", "grey"];
+  var counts = {};
+  for (var i = 0; i < WORD_LEN; i++) {
+    if (g[i] === a[i]) { res[i] = "green"; }
+    else { counts[a[i]] = (counts[a[i]] || 0) + 1; }
+  }
+  for (var j = 0; j < WORD_LEN; j++) {
+    if (res[j] === "green") continue;
+    if (counts[g[j]] > 0) { res[j] = "yellow"; counts[g[j]]--; }
+  }
+  return res;
+}
+var WORD_SET = {};
+(function () { for (var i = 0; i < WORDS.length; i++) WORD_SET[WORDS[i]] = true; })();
+function isValidGuess(word) {
+  return typeof word === "string" && word.length === WORD_LEN && !!WORD_SET[word.toUpperCase()];
+}
+function keyStateFor(results) {
+  // results: array of {guess, marks}; returns map letter -> best state (green > yellow > grey)
+  var map = {};
+  var rank = { grey: 0, yellow: 1, green: 2 };
+  for (var r = 0; r < results.length; r++) {
+    var g = results[r].guess, m = results[r].marks;
+    for (var i = 0; i < WORD_LEN; i++) {
+      var L = g[i];
+      if (!map[L] || rank[m[i]] > rank[map[L]]) map[L] = m[i];
+    }
+  }
+  return map;
+}
+
+// ---- coins / ranks / streaks ----
+function rankForBestStreak(best) {
+  if (best >= 20) return "Word Legend";
+  if (best >= 10) return "Word Master";
+  if (best >= 5) return "Word Sleuth";
+  if (best >= 2) return "Word Explorer";
+  return "Word Rookie";
+}
+function winCoinsFor(mode, guessesUsed) {
+  if (mode === "daily") return DAILY_WIN_BASE + DAILY_WIN_PER_UNUSED * Math.max(0, MAX_GUESSES - guessesUsed);
+  return PRACTICE_WIN_COINS;
+}
+function dailyBonusCoins(newStreak) { return 10 + 5 * Math.max(0, newStreak - 1); }
+function isDailyAvailable(lastClaimDate, today) { return lastClaimDate !== today; }
+function dailyBonusStreakOnClaim(lastClaimDate, today, prevLastClaim, prevStreak) {
+  // lastClaimDate = stored last claim; today = claim date; prevLastClaim same thing
+  // kept signature parallel to hex-merge: (lastClaim, today, prevLast, prevStreak)
+  if (lastClaimDate === today) return prevStreak;
+  var yesterday = dateStrOfMs(parseDateStr(today) - 86400000);
+  if (prevLastClaim === yesterday) return prevStreak + 1;
+  return 1;
+}
+function winPct(stats) {
+  if (!stats || !stats.played) return 0;
+  return Math.round((stats.wins / stats.played) * 100);
+}
+function nextWordCountdown(nowMs) {
+  var d = new Date(nowMs == null ? Date.now() : nowMs);
+  var midnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
+  var s = Math.max(0, Math.floor((midnight - (nowMs == null ? Date.now() : nowMs)) / 1000));
+  var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  return pad(h) + ":" + pad(m) + ":" + pad(ss);
+}
+function shareText(mode, dateStr, guesses, won) {
+  var lines = [];
+  lines.push("Word Quest Daily" + (mode === "daily" ? " " + dateStr : " Practice"));
+  lines.push(won ? ("Solved in " + guesses.length + "/6") : "Not solved (X/6)");
+  for (var i = 0; i < guesses.length; i++) {
+    var row = "";
+    for (var j = 0; j < WORD_LEN; j++) {
+      row += guesses[i].marks[j] === "green" ? "🟩" : guesses[i].marks[j] === "yellow" ? "🟨" : "⬛";
+    }
+    lines.push(row);
+  }
+  return lines.join("\n");
+}
+
+// ---- hints ----
+function hintCandidates(answer, revealed) {
+  var out = [];
+  for (var i = 0; i < WORD_LEN; i++) if (!revealed[i]) out.push(i);
+  return out;
+}
+function pickHintPosition(answer, revealed, rng) {
+  var c = hintCandidates(answer, revealed);
+  if (!c.length) return -1;
+  var r = rng || mulberry32(hashString(answer) + c.length);
+  return c[Math.floor(r() * c.length)];
+}
+
+// ---- save: versioned, migration ladder, storage injected ----
+function defaultSave() {
+  return {
+    version: SAVE_VERSION, coins: 0,
+    stats: { played: 0, wins: 0, dist: [0, 0, 0, 0, 0, 0] },
+    streak: 0, bestStreak: 0,
+    lastDailyDate: "", lastDailyWon: false, lastDailyGuesses: 0,
+    practiceWins: 0, practiceSeed: 1,
+    dailyBonus: { lastClaim: "", streak: 0 },
+    tutorialSeen: false, muted: false
+  };
+}
+function migrateSave(raw) {
+  var s = defaultSave();
+  if (!raw || typeof raw !== "object") return s;
+  if (typeof raw.coins === "number") s.coins = raw.coins;
+  if (raw.stats && typeof raw.stats === "object") {
+    if (typeof raw.stats.played === "number") s.stats.played = raw.stats.played;
+    if (typeof raw.stats.wins === "number") s.stats.wins = raw.stats.wins;
+    if (Array.isArray(raw.stats.dist)) for (var i = 0; i < 6; i++) s.stats.dist[i] = raw.stats.dist[i] | 0;
+  }
+  if (typeof raw.streak === "number") s.streak = raw.streak;
+  if (typeof raw.bestStreak === "number") s.bestStreak = raw.bestStreak;
+  if (typeof raw.lastDailyDate === "string") s.lastDailyDate = raw.lastDailyDate;
+  if (typeof raw.lastDailyWon === "boolean") s.lastDailyWon = raw.lastDailyWon;
+  if (typeof raw.lastDailyGuesses === "number") s.lastDailyGuesses = raw.lastDailyGuesses;
+  if (typeof raw.practiceWins === "number") s.practiceWins = raw.practiceWins;
+  if (typeof raw.practiceSeed === "number") s.practiceSeed = raw.practiceSeed;
+  if (raw.dailyBonus && typeof raw.dailyBonus === "object") {
+    if (typeof raw.dailyBonus.lastClaim === "string") s.dailyBonus.lastClaim = raw.dailyBonus.lastClaim;
+    if (typeof raw.dailyBonus.streak === "number") s.dailyBonus.streak = raw.dailyBonus.streak;
+  }
+  if (typeof raw.tutorialSeen === "boolean") s.tutorialSeen = raw.tutorialSeen;
+  if (typeof raw.muted === "boolean") s.muted = raw.muted;
+  s.version = SAVE_VERSION;
+  return s;
+}
+function loadSave(storage) {
+  try {
+    if (!storage) return defaultSave();
+    var raw = storage.getItem(SAVE_KEY);
+    if (!raw) return defaultSave();
+    var parsed;
+    try { parsed = JSON.parse(raw); } catch (e) { return defaultSave(); }
+    return migrateSave(parsed);
+  } catch (e) { return defaultSave(); }
+}
+function persistSave(storage, save) {
+  try {
+    if (!storage) return false;
+    storage.setItem(SAVE_KEY, JSON.stringify(save));
+    return true;
+  } catch (e) { return false; }
+}
+// Apply a finished game to a save (pure: returns a NEW save object).
+function applyGameResult(save, opts) {
+  var s = migrateSave(JSON.parse(JSON.stringify(save)));
+  var mode = opts.mode, won = !!opts.won, guessesUsed = opts.guessesUsed || 0, today = opts.today || "";
+  if (mode === "daily") {
+    s.stats.played++;
+    if (won) {
+      s.stats.wins++;
+      s.stats.dist[Math.min(MAX_GUESSES, Math.max(1, guessesUsed)) - 1]++;
+      var yesterday = dateStrOfMs(parseDateStr(today) - 86400000);
+      s.streak = (s.lastDailyDate === yesterday || s.lastDailyDate === "") && s.lastDailyDate !== today
+        ? s.streak + 1 : (s.lastDailyDate === today ? s.streak : 1);
+      // first-ever daily win after a gap also restarts at 1 when last date is older
+      if (s.lastDailyDate && s.lastDailyDate !== yesterday && s.lastDailyDate !== today) s.streak = 1;
+      if (s.streak > s.bestStreak) s.bestStreak = s.streak;
+      s.coins += winCoinsFor("daily", guessesUsed);
+    } else {
+      s.streak = 0;
+    }
+    s.lastDailyDate = today; s.lastDailyWon = won; s.lastDailyGuesses = guessesUsed;
+  } else {
+    if (won) { s.practiceWins++; s.coins += PRACTICE_WIN_COINS; }
+  }
+  return s;
+}
+function applyDailyBonusClaim(save, today) {
+  var s = migrateSave(JSON.parse(JSON.stringify(save)));
+  if (s.dailyBonus.lastClaim === today) return s; // already claimed: no-op
+  var ns = dailyBonusStreakOnClaim(s.dailyBonus.lastClaim, today, s.dailyBonus.lastClaim, s.dailyBonus.streak);
+  s.dailyBonus.streak = ns;
+  s.dailyBonus.lastClaim = today;
+  s.coins += dailyBonusCoins(ns);
+  return s;
+}
+// __PURE_LOGIC_END__
+
+// ================= Game code (DOM + canvas) =================
+function safeStorage() {
+  try { if (typeof localStorage !== "undefined" && localStorage) return localStorage; } catch (e) {}
+  try { if (typeof window !== "undefined" && window.localStorage) return window.localStorage; } catch (e) {}
+  return null;
+}
+var STORE = safeStorage();
+var SAVE = loadSave(STORE);
+var REDUCED_MOTION = false;
+try { REDUCED_MOTION = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); } catch (e) {}
+
+var canvas = document.getElementById("boardCanvas");
+var ctx = canvas.getContext("2d");
+var DPR = 1;
+try { DPR = window.devicePixelRatio || 1; } catch (e) {}
+var W = 960, H = 600;
+function setupCanvas() {
+  try {
+    DPR = window.devicePixelRatio || 1;
+    canvas.width = W * DPR; canvas.height = H * DPR;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  } catch (e) {}
+}
+setupCanvas();
+try { if (window.addEventListener) window.addEventListener("resize", setupCanvas); } catch (e) {}
+
+// ---- audio: synthesized WebAudio only, quiet default, resume on gesture ----
+var AudioSys = {
+  ctx: null, muted: !!SAVE.muted,
+  ensure: function () {
+    if (this.muted) return null;
+    try {
+      if (!this.ctx) {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        this.ctx = new AC();
+      }
+      if (this.ctx.state === "suspended") this.ctx.resume();
+      return this.ctx;
+    } catch (e) { return null; }
+  },
+  blip: function (freq, dur, type, vol) {
+    var ac = this.ensure(); if (!ac) return;
+    try {
+      var o = ac.createOscillator(), g = ac.createGain();
+      o.type = type || "sine"; o.frequency.value = freq || 440;
+      g.gain.setValueAtTime(vol == null ? 0.06 : vol, ac.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + (dur || 0.12));
+      o.connect(g); g.connect(ac.destination);
+      o.start(); o.stop(ac.currentTime + (dur || 0.12));
+    } catch (e) {}
+  },
+  key: function () { this.blip(520, 0.06, "square", 0.03); },
+  flip: function () { this.blip(660, 0.08, "sine", 0.05); },
+  win: function () { var s = this; [523, 659, 784, 1047].forEach(function (f, i) { setTimeout(function () { s.blip(f, 0.18, "sine", 0.07); }, i * 110); }); },
+  lose: function () { var s = this; [392, 330, 262].forEach(function (f, i) { setTimeout(function () { s.blip(f, 0.2, "triangle", 0.06); }, i * 140); }); }
+};
+function setMuted(m) {
+  SAVE.muted = !!m; AudioSys.muted = !!m;
+  persistSave(STORE, SAVE);
+  var b = document.getElementById("btnSound");
+  if (b) b.textContent = SAVE.muted ? "Sound: Off" : "Sound: On";
+}
+
+// ---- game state ----
+var G = {
+  scene: "boot", mode: "daily", answer: "", guesses: [], current: "",
+  hintsLeft: HINTS_PER_GAME, revealed: [null, null, null, null, null],
+  keyStates: {}, flip: null, particles: [], shake: 0, flash: 0,
+  rng: mulberry32(1), over: false, won: false, coinsEarned: 0,
+  toastUntil: 0, lastTick: 0, acc: 0, paused: false
+};
+function nowMs() { return Date.now(); }
+var pressedKeys = {}; // held keys (Set-like), read inside update()
+var keyOrder = []; // press queue: every tap enqueues once, even repeats of the same key
+function feedKey(code) {
+  keyOrder.push(code); // queue — repeats count (ZZZZZ is five presses, not one)
+  pressedKeys[code] = true; // held set
+}
+function consumeKeys() {
+  var list = keyOrder.slice(); keyOrder = []; pressedKeys = {};
+  return list;
+}
+
+// ---- scene machine: boot -> menu -> playing -> results (single string) ----
+function setScene(next) {
+  var prev = G.scene;
+  if (prev === next) return;
+  // exit side-effects
+  if (prev === "playing" && next !== "playing") { /* input locked by scene anyway */ }
+  G.scene = next;
+  try { window.__state = next; } catch (e) {}
+  var menu = document.getElementById("menuOverlay");
+  var tut = document.getElementById("tutorialOverlay");
+  var res = document.getElementById("resultsOverlay");
+  if (menu) menu.classList.toggle("hidden", next !== "menu");
+  if (tut) tut.classList.toggle("hidden", next !== "tutorial");
+  if (res) res.classList.toggle("hidden", next !== "results");
+  var live = document.getElementById("liveRegion");
+  if (live) {
+    live.textContent = next === "menu" ? "Menu. Word Quest Daily." :
+      next === "playing" ? "Playing. Guess the five letter word." :
+      next === "results" ? "Game over. " + (document.getElementById("resultTitle") ? document.getElementById("resultTitle").textContent : "") :
+      next === "tutorial" ? "How to play." : "";
+  }
+  if (next === "menu") refreshMenu();
+}
+function showToast(msg) {
+  var t = document.getElementById("toast");
+  if (!t) return;
+  t.textContent = msg; t.classList.remove("hidden");
+  G.toastUntil = nowMs() + 1400;
+  setTimeout(function () { try { t.classList.add("hidden"); } catch (e) {} }, 1400);
+}
+function addParticles(n, colors) {
+  if (REDUCED_MOTION) return;
+  for (var i = 0; i < n; i++) {
+    G.particles.push({
+      x: W / 2 + (G.rng() - 0.5) * 300, y: 200 + (G.rng() - 0.5) * 80,
+      vx: (G.rng() - 0.5) * 260, vy: -60 - G.rng() * 160,
+      life: 0.9 + G.rng() * 0.5, max: 1.4,
+      color: colors[Math.floor(G.rng() * colors.length)], size: 4 + G.rng() * 6
+    });
+  }
+}
+function doShake() { if (!REDUCED_MOTION) G.shake = 10; }
+
+// ---- starting games ----
+function startGame(mode) {
+  var today = todayStr();
+  if (mode === "daily") {
+    G.answer = dailyWord(today);
+    G.rng = mulberry32(hashString("daily-" + today));
+  } else {
+    SAVE.practiceSeed = (SAVE.practiceSeed | 0) + 1;
+    G.answer = seededPracticeWord(SAVE.practiceSeed);
+    G.rng = mulberry32(SAVE.practiceSeed * 2654435761 >>> 0);
+    persistSave(STORE, SAVE);
+  }
+  G.mode = mode;
+  G.guesses = []; G.current = ""; G.hintsLeft = HINTS_PER_GAME;
+  G.revealed = [null, null, null, null, null];
+  G.keyStates = {}; G.flip = null; G.particles = []; G.shake = 0;
+  G.over = false; G.won = false; G.coinsEarned = 0;
+  keyOrder = []; pressedKeys = {};
+  setScene("playing");
+  updateHUD();
+  if (!SAVE.tutorialSeen) { SAVE.tutorialSeen = true; persistSave(STORE, SAVE); setScene("tutorial"); }
+}
+
+// ---- hints: reveal one unrevealed letter in its correct position ----
+function applyHint() {
+  if (G.scene !== "playing" || G.over || G.flip) return false;
+  if (G.hintsLeft <= 0) { showToast("No hints left"); return false; }
+  if (SAVE.coins < HINT_COST) { showToast("Need 10 coins for a hint"); return false; }
+  var pos = pickHintPosition(G.answer, G.revealed.map(function (r) { return !!r; }), G.rng);
+  if (pos < 0) return false;
+  SAVE.coins -= HINT_COST; G.hintsLeft--;
+  G.revealed[pos] = G.answer[pos];
+  // rebuild current guess around revealed letters
+  var cur = G.current.split("");
+  while (cur.length < WORD_LEN) cur.push("");
+  cur[pos] = G.answer[pos];
+  G.current = cur.join("");
+  AudioSys.flip();
+  persistSave(STORE, SAVE);
+  updateHUD();
+  showToast("Hint: letter " + (pos + 1) + " is " + G.answer[pos]);
+  return true;
+}
+
+// ---- guess submission ----
+function submitGuess() {
+  if (G.scene !== "playing" || G.over || G.flip) return;
+  if (G.current.length < WORD_LEN) { showToast("Not enough letters"); doShake(); return; }
+  var guess = G.current.toUpperCase();
+  if (!isValidGuess(guess)) { showToast("Not in word list"); doShake(); return; }
+  var marks = evaluateGuess(guess, G.answer);
+  G.guesses.push({ guess: guess, marks: marks });
+  G.keyStates = keyStateFor(G.guesses);
+  G.current = "";
+  G.flip = { row: G.guesses.length - 1, start: nowMs(), dur: 750 };
+  AudioSys.flip();
+}
+function resolveFlip() {
+  var row = G.flip.row;
+  G.flip = null;
+  var last = G.guesses[row];
+  if (last.guess === G.answer) { endGame(true); return; }
+  if (G.guesses.length >= MAX_GUESSES) { endGame(false); return; }
+  updateHUD();
+}
+function endGame(won) {
+  G.over = true; G.won = won;
+  var today = todayStr();
+  var before = SAVE.coins;
+  SAVE = applyGameResult(SAVE, { mode: G.mode, won: won, guessesUsed: G.guesses.length, today: today });
+  G.coinsEarned = SAVE.coins - before;
+  persistSave(STORE, SAVE);
+  if (won) { AudioSys.win(); addParticles(46, ["#6aaa64", "#ffd166", "#c9b458", "#ffffff"]); }
+  else { AudioSys.lose(); doShake(); }
+  showResults(won);
+  setScene("results");
+  updateHUD();
+}
+function showResults(won) {
+  var t = document.getElementById("resultTitle");
+  if (t) t.textContent = won ? "You got it!" : "Out of tries!";
+  var w = document.getElementById("resultWord");
+  if (w) w.textContent = "The word was: " + G.answer + (won ? "" : "");
+  var d = document.getElementById("resultDetail");
+  if (d) d.textContent = won
+    ? "Solved in " + G.guesses.length + " / 6 guesses. " + (G.mode === "daily" ? "Daily streak: " + SAVE.streak + "." : "Practice win!")
+    : "Better luck next time — the daily word changes at midnight.";
+  var s = document.getElementById("resultStreak"); if (s) s.textContent = SAVE.streak;
+  var c = document.getElementById("resultCoins"); if (c) c.textContent = "+" + G.coinsEarned;
+  var p = document.getElementById("resultWinPct"); if (p) p.textContent = winPct(SAVE.stats);
+  var sh = document.getElementById("shareText");
+  if (sh) sh.textContent = shareText(G.mode, todayStr(), G.guesses, won);
+  var nx = document.getElementById("nextWordText");
+  if (nx) nx.textContent = G.mode === "daily" ? "Next word in " + nextWordCountdown() : "Practice as much as you like — the daily word is new tomorrow.";
+}
+
+// ---- HUD / menu ----
+function updateHUD() {
+  var c = document.getElementById("hudCoins"); if (c) c.textContent = SAVE.coins;
+  var s = document.getElementById("hudStreak"); if (s) s.textContent = SAVE.streak;
+  var r = document.getElementById("hudRank"); if (r) r.textContent = rankForBestStreak(SAVE.bestStreak);
+  var h = document.getElementById("btnHint");
+  if (h) {
+    h.textContent = "Hint (10) ×" + G.hintsLeft;
+    h.disabled = !(G.scene === "playing" && !G.over && G.hintsLeft > 0 && SAVE.coins >= HINT_COST);
+    h.classList.toggle("disabled", h.disabled);
+  }
+}
+function refreshMenu() {
+  var set = function (id, v) { var e = document.getElementById(id); if (e) e.textContent = v; };
+  set("menuStreak", SAVE.streak);
+  set("menuBestStreak", SAVE.bestStreak);
+  set("menuCoins", SAVE.coins);
+  set("menuRank", rankForBestStreak(SAVE.bestStreak));
+  set("menuPlayed", SAVE.stats.played);
+  set("menuWins", SAVE.stats.wins);
+  set("menuWinPct", winPct(SAVE.stats));
+  var today = todayStr();
+  var done = SAVE.lastDailyDate === today;
+  set("menuDailyStatus", done
+    ? "Daily word done for today (" + (SAVE.lastDailyWon ? "won" : "lost") + "). Next word in " + nextWordCountdown() + "."
+    : "Today's word is waiting — one shot a day!");
+  var db = document.getElementById("btnDaily");
+  if (db) { db.disabled = done; db.classList.toggle("disabled", done); }
+  var bonus = document.getElementById("dailyBonus");
+  if (bonus) {
+    var avail = isDailyAvailable(SAVE.dailyBonus.lastClaim, today);
+    bonus.classList.toggle("hidden", !avail);
+    var bt = document.getElementById("dailyBonusText");
+    if (bt) bt.textContent = avail ? "Daily bonus streak: " + SAVE.dailyBonus.streak + " days" : "";
+  }
+  var dist = document.getElementById("menuDist");
+  if (dist) {
+    var max = 1; for (var i = 0; i < 6; i++) max = Math.max(max, SAVE.stats.dist[i]);
+    var html = "";
+    for (var j = 0; j < 6; j++) {
+      html += '<div class="distRow"><span class="n">' + (j + 1) + '</span><div class="distBar" style="width:' + Math.round((SAVE.stats.dist[j] / max) * 220) + 'px">' + SAVE.stats.dist[j] + '</div></div>';
+    }
+    dist.innerHTML = html;
+  }
+  updateHUD();
+}
+function claimDailyBonus() {
+  var today = todayStr();
+  if (!isDailyAvailable(SAVE.dailyBonus.lastClaim, today)) { showToast("Already claimed today"); return false; }
+  var before = SAVE.coins;
+  SAVE = applyDailyBonusClaim(SAVE, today);
+  persistSave(STORE, SAVE);
+  showToast("Daily bonus: +" + (SAVE.coins - before) + " coins!");
+  AudioSys.win();
+  refreshMenu();
+  return true;
+}
+
+// ---- update(): mutates state only; reads the pressed-keys Set ----
+function update(dt) {
+  // particles + shake always animate (visual only)
+  if (G.shake > 0) G.shake = Math.max(0, G.shake - dt * 0.03);
+  for (var i = G.particles.length - 1; i >= 0; i--) {
+    var p = G.particles[i];
+    p.life -= dt / 1000; p.x += p.vx * dt / 1000; p.y += p.vy * dt / 1000; p.vy += 300 * dt / 1000;
+    if (p.life <= 0) G.particles.splice(i, 1);
+  }
+  // flip animation completes -> resolve (state change happens here, once)
+  if (G.flip && nowMs() - G.flip.start >= G.flip.dur) resolveFlip();
+  // toast expiry
+  if (G.toastUntil && nowMs() > G.toastUntil) { var t = document.getElementById("toast"); if (t) t.classList.add("hidden"); G.toastUntil = 0; }
+  // consume input keys (physical + on-screen both feed this Set)
+  var keys = consumeKeys();
+  if (!keys.length) return;
+  if (G.scene === "menu") {
+    if (keys.indexOf("Enter") >= 0 || keys.indexOf("Space") >= 0) startGame("daily");
+    return;
+  }
+  if (G.scene === "tutorial") {
+    if (keys.indexOf("Enter") >= 0 || keys.indexOf("Escape") >= 0) setScene("playing");
+    return;
+  }
+  if (G.scene === "results") {
+    if (keys.indexOf("Enter") >= 0) setScene("menu");
+    return;
+  }
+  if (G.scene !== "playing" || G.over || G.flip) return;
+  for (var k = 0; k < keys.length; k++) {
+    var code = keys[k];
+    if (code === "Backspace") {
+      // delete last non-revealed letter
+      for (var d = G.current.length - 1; d >= 0; d--) {
+        if (!G.revealed[d]) { G.current = G.current.slice(0, d) + G.current.slice(d + 1); break; }
+      }
+      AudioSys.key();
+    } else if (code === "Enter") {
+      submitGuess();
+    } else if (/^Key[A-Z]$/.test(code)) {
+      var letter = code.slice(3);
+      // fill first empty slot that is not revealed
+      var cur = G.current.split("");
+      while (cur.length < WORD_LEN) cur.push("");
+      var placed = false;
+      for (var s = 0; s < WORD_LEN; s++) {
+        if (!cur[s] && !G.revealed[s]) { cur[s] = letter; placed = true; break; }
+      }
+      if (placed) { G.current = cur.join(""); AudioSys.key(); }
+    }
+  }
+  updateHUD();
+}
+
+// ---- keyboard geometry (single source; render + hit-test share it) ----
+var KEY_ROWS = ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"];
+function keyboardLayout() {
+  var kw = 62, kh = 58, gap = 7, top = 452;
+  var rows = [];
+  for (var r = 0; r < 3; r++) {
+    var row = KEY_ROWS[r];
+    var total = row.length * (kw + gap) - gap;
+    if (r === 2) total += 2 * (kw + 24 + gap); // Enter + Backspace are wider
+    var x = (W - total) / 2;
+    var keys = [];
+    if (r === 2) { keys.push({ code: "Enter", label: "ENTER", w: kw + 24, x: x }); x += kw + 24 + gap; }
+    for (var i = 0; i < row.length; i++) {
+      keys.push({ code: "Key" + row[i], label: row[i], w: kw, x: x });
+      x += kw + gap;
+    }
+    if (r === 2) keys.push({ code: "Backspace", label: "⌫", w: kw + 24, x: x });
+    rows.push({ y: top + r * (kh + gap), h: kh, keys: keys });
+  }
+  return rows;
+}
+function keyAt(px, py) {
+  var rows = keyboardLayout();
+  for (var r = 0; r < rows.length; r++) {
+    if (py >= rows[r].y && py <= rows[r].y + rows[r].h) {
+      for (var i = 0; i < rows[r].keys.length; i++) {
+        var k = rows[r].keys[i];
+        if (px >= k.x && px <= k.x + k.w) return k.code;
+      }
+    }
+  }
+  return null;
+}
+
+// ---- render(): draws only, never mutates game state ----
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+var TILE_COLORS = { green: "#6aaa64", yellow: "#c9b458", grey: "#787c7e", empty: "#1e3a26", current: "#2c5a37" };
+function render() {
+  ctx.clearRect(0, 0, W, H);
+  var bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#0d2b1a"); bg.addColorStop(1, "#07130c");
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  if (G.shake > 0) ctx.translate((G.rng ? 0 : 0) + (Math.sin(nowMs() / 30) * G.shake * 0.4), 0);
+  // board: 6 rows x 5 tiles
+  var ts = 56, gap = 8, bw = 5 * ts + 4 * gap, bx = (W - bw) / 2, by = 66;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (var r = 0; r < MAX_GUESSES; r++) {
+    var isCurrentRow = (r === G.guesses.length && !G.over);
+    for (var c = 0; c < WORD_LEN; c++) {
+      var x = bx + c * (ts + gap), y = by + r * (ts + gap);
+      var letter = "", color = TILE_COLORS.empty, border = "#3a5a42";
+      var submitted = G.guesses[r];
+      if (submitted) {
+        letter = submitted.guess[c];
+        color = TILE_COLORS[submitted.marks[c]];
+        border = color;
+      } else if (isCurrentRow) {
+        letter = (G.current[c] || "");
+        color = letter ? TILE_COLORS.current : TILE_COLORS.empty;
+        border = letter ? "#9fc3a8" : "#3a5a42";
+        if (G.revealed[c]) { letter = G.revealed[c]; color = "#2c5a37"; border = "#ffd166"; }
+      }
+      // flip animation: scale-y squash on the flipping row
+      var flipT = 0;
+      if (G.flip && G.flip.row === r) {
+        var el = nowMs() - G.flip.start;
+        var per = el - c * 90;
+        flipT = per > 0 && per < 220 ? Math.sin((per / 220) * Math.PI) : 0;
+      }
+      ctx.save();
+      if (flipT > 0) { ctx.translate(x + ts / 2, y + ts / 2); ctx.scale(1, 1 - flipT * 0.55); ctx.translate(-(x + ts / 2), -(y + ts / 2)); }
+      ctx.fillStyle = color;
+      roundRect(x, y, ts, ts, 8); ctx.fill();
+      ctx.strokeStyle = border; ctx.lineWidth = 2; ctx.stroke();
+      if (letter) {
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "900 30px system-ui, sans-serif";
+        ctx.fillText(letter, x + ts / 2, y + ts / 2 + 2);
+      }
+      ctx.restore();
+    }
+  }
+  // mode + word-status line
+  ctx.fillStyle = "#9fc3a8"; ctx.font = "700 15px system-ui, sans-serif";
+  var status = G.mode === "daily" ? "DAILY  •  " + todayStr() : "PRACTICE";
+  if (G.over) status += G.won ? "  •  SOLVED!" : "  •  " + G.answer;
+  ctx.fillText(status, W / 2, by - 18);
+  // on-screen keyboard
+  var rows = keyboardLayout();
+  for (var ri = 0; ri < rows.length; ri++) {
+    for (var ki = 0; ki < rows[ri].keys.length; ki++) {
+      var k = rows[ri].keys[ki];
+      var st = null;
+      if (/^Key[A-Z]$/.test(k.code)) st = G.keyStates[k.code.slice(3)];
+      var kc = st ? TILE_COLORS[st] : "#3a4a3f";
+      ctx.fillStyle = kc;
+      roundRect(k.x, rows[ri].y, k.w, rows[ri].h, 8); ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "900 " + (k.w > 70 ? 17 : 22) + "px system-ui, sans-serif";
+      ctx.fillText(k.label, k.x + k.w / 2, rows[ri].y + rows[ri].h / 2 + 1);
+    }
+  }
+  // particles
+  for (var pi = 0; pi < G.particles.length; pi++) {
+    var p = G.particles[pi];
+    ctx.globalAlpha = Math.max(0, Math.min(1, p.life / p.max));
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+  // focus hint
+  ctx.fillStyle = "rgba(255,255,255,0.45)"; ctx.font = "13px system-ui, sans-serif";
+  ctx.fillText("Type with your keyboard or tap the keys • Enter submits • Backspace deletes", W / 2, H - 8);
+}
+
+// ---- fixed-timestep loop: clamp delta <=250ms BEFORE accumulating ----
+var STEP = 1000 / 60, lastTime = 0, acc = 0;
+function frame(t) {
+  if (!lastTime) lastTime = t;
+  var delta = t - lastTime;
+  lastTime = t;
+  if (delta > 250) delta = 250;
+  if (delta < 0) delta = 0;
+  acc += delta;
+  var guard = 0;
+  while (acc >= STEP && guard < 5) { update(STEP); acc -= STEP; guard++; }
+  render();
+  try { requestAnimationFrame(frame); } catch (e) {}
+}
+try {
+  if (typeof document !== "undefined" && document.addEventListener) {
+    document.addEventListener("visibilitychange", function () {
+      try {
+        if (document.hidden) { lastTime = 0; acc = 0; G.paused = true; }
+        else { lastTime = 0; acc = 0; G.paused = false; }
+      } catch (e) {}
+    });
+  }
+} catch (e) {}
+
+// ---- input: ONE Pointer Events stream on the canvas ----
+function canvasPoint(e) {
+  var rect = canvas.getBoundingClientRect();
+  var scale = W / (rect.width || W);
+  return { x: (e.clientX - rect.left) * scale, y: (e.clientY - rect.top) * scale };
+}
+function onPointerDown(e) {
+  try { if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId); } catch (err) {}
+  AudioSys.ensure();
+  if (G.scene !== "playing") return;
+  var p = canvasPoint(e);
+  var code = keyAt(p.x, p.y);
+  if (code) feedKey(code);
+}
+try { canvas.addEventListener("pointerdown", onPointerDown); } catch (e) {}
+// physical keyboard: ONLY feeds the Set; update() acts on it
+try {
+  document.addEventListener("keydown", function (e) {
+    AudioSys.ensure();
+    if (!e || !e.code) return;
+    if (/^Key[A-Z]$/.test(e.code) || e.code === "Enter" || e.code === "Backspace" || e.code === "Space" || e.code === "Escape") {
+      feedKey(e.code);
+      if (e.preventDefault) e.preventDefault();
+    }
+  });
+  document.addEventListener("keyup", function (e) {
+    if (e && e.code) { delete pressedKeys[e.code]; } // held set only; queued presses stay queued
+  });
+} catch (e) {}
+
+// ---- DOM buttons ----
+function bind(id, fn) { try { var el = document.getElementById(id); if (el) el.addEventListener("click", fn); } catch (e) {} }
+bind("btnDaily", function () { startGame("daily"); });
+bind("btnPractice", function () { startGame("practice"); });
+bind("btnHow", function () { setScene("tutorial"); });
+bind("btnTutGotIt", function () { setScene("menu"); });
+bind("btnTutPlay", function () { setScene("playing"); });
+bind("btnClaimDaily", function () { claimDailyBonus(); });
+bind("btnHint", function () { applyHint(); });
+bind("btnSound", function () { setMuted(!SAVE.muted); });
+bind("btnMenu", function () { setScene("menu"); });
+bind("btnResultPractice", function () { startGame("practice"); });
+bind("btnResultMenu", function () { setScene("menu"); });
+bind("btnCopyShare", function () {
+  var txt = "";
+  try { var sh = document.getElementById("shareText"); if (sh) txt = sh.textContent; } catch (e) {}
+  var status = document.getElementById("copyStatus");
+  function done(ok) { if (status) status.textContent = ok ? "Copied!" : "Copy not available"; }
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText) {
+      var p = navigator.clipboard.writeText(txt);
+      if (p && p.then) { p.then(function () { done(true); }, function () { done(false); }); return; }
+      done(true); return;
+    }
+  } catch (e) {}
+  try {
+    var ta = document.createElement("textarea");
+    ta.value = txt; document.body.appendChild(ta); ta.select();
+    var ok = document.execCommand ? document.execCommand("copy") : false;
+    document.body.removeChild(ta); done(!!ok); return;
+  } catch (e) { done(false); }
+});
+
+// ---- test hooks ----
+try {
+  window.__WordQuestTest = {
+    G: G,
+    get SAVE() { return SAVE; },
+    WORDS: WORDS, dailyWord: dailyWord, evaluateGuess: evaluateGuess,
+    startGame: startGame, applyHint: applyHint, claimDailyBonus: claimDailyBonus,
+    submitGuess: submitGuess, setScene: setScene, update: update, render: render,
+    feedKey: feedKey, keyAt: keyAt, keyboardLayout: keyboardLayout,
+    step: function (ms) { var n = Math.max(1, Math.round(ms / STEP)); for (var i = 0; i < n; i++) update(STEP); render(); },
+    typeWord: function (word) {
+      for (var i = 0; i < word.length; i++) feedKey("Key" + word[i]);
+      update(STEP);
+    },
+    pressEnter: function () { feedKey("Enter"); update(STEP); },
+    forceAnswer: function (w) { G.answer = w; },
+    store: STORE
+  };
+} catch (e) {}
+
+// ---- bootstrap ----
+setMuted(SAVE.muted);
+setScene("menu");
+render();
+try { window.__gameReady = true; window.__state = G.scene; } catch (e) {}
+try { requestAnimationFrame(frame); } catch (e) {}
+</script>
+</body>
+</html>
