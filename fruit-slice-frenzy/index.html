@@ -1,0 +1,1180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Fruit Slice Frenzy — Swipe, Slice, Don't Hit the Bombs!</title>
+<!--
+  Fruit Slice Frenzy — original HTML5 swipe-to-slice arcade game.
+  100% code-drawn (Canvas 2D + CSS), no images, no audio files, no
+  external resources at all. Single file, plain vanilla JS, no
+  frameworks, no SDK, no ads, no external URLs. Saves in localStorage
+  only, save key "fruitslice_save_v1".
+
+  How to play: fruits are tossed up from the bottom of the market
+  stall and arc back down under gravity. Drag your finger / mouse
+  across them to slice — each fruit is worth points (apple 10, orange
+  20, strawberry 30, pineapple 40, watermelon 50). Slicing several
+  fruits in ONE swipe raises the combo multiplier (up to x5). Bombs
+  are tossed up too — slice one and you lose a life. A fruit that
+  falls off the bottom unsliced also costs a life. 3 lives, 60-second
+  rounds: reach the level target score before the timer ends to
+  advance. Streaks (rounds finished without missing a fruit), a daily
+  bonus, and ranks from Rookie to Legend. Sounds are tiny WebAudio
+  oscillator/noise blips with a mute toggle. No audio files.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; background: #2b1608; overflow: hidden; }
+  body { font-family: "Trebuchet MS", "Segoe UI", Verdana, sans-serif; color: #fff;
+    display: flex; align-items: center; justify-content: center; }
+  #wrap { width: 100%; max-width: 960px; }
+  #game { position: relative; width: 100%; aspect-ratio: 960 / 600; max-height: 100vh;
+    margin: 0 auto; overflow: hidden; border-radius: 14px;
+    box-shadow: 0 18px 60px rgba(0,0,0,.6), 0 0 0 3px rgba(255,176,32,.35), 0 0 44px rgba(255,80,40,.25);
+    background: linear-gradient(180deg, #ffe9b8 0%, #ffd98a 55%, #f7b95c 100%); }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  canvas:focus-visible { outline: 3px solid #ff8c1a; outline-offset: -3px; }
+  #liveRegion { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .hidden { display: none !important; }
+
+  /* HUD */
+  #hud { position: absolute; top: 0; left: 0; right: 0; display: flex; gap: 6px;
+    padding: 10px 12px 0; pointer-events: none; z-index: 5; }
+  .stat { flex: 1; background: rgba(60,25,5,.82); border: 1px solid rgba(255,200,80,.5);
+    border-radius: 12px; padding: 5px 6px 6px; text-align: center; min-width: 0;
+    box-shadow: 0 4px 12px rgba(0,0,0,.35); }
+  .stat .lbl { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #ffcf5c; font-weight: 700; }
+  .stat .val { font-size: 22px; font-weight: 900; line-height: 1.1; white-space: nowrap; }
+  #hudLives .val { color: #ff6b6b; letter-spacing: 2px; }
+  #hudCombo .val { color: #ffe066; }
+  #hudTime .val { color: #7cf29c; }
+
+  /* target progress bar (fills as the round score nears the level target) */
+  #targetBar { position: absolute; top: 66px; left: 12px; right: 118px; height: 12px;
+    background: rgba(60,25,5,.55); border: 1px solid rgba(255,200,80,.5);
+    border-radius: 999px; z-index: 5; overflow: hidden; }
+  #targetFill { height: 100%; width: 0%; background: linear-gradient(90deg, #22c55e, #facc15);
+    border-radius: 999px; transition: width .2s; }
+  #targetLabel { position: absolute; right: 6px; top: 0; font-size: 9px; font-weight: 900;
+    letter-spacing: .08em; color: #fff; line-height: 12px; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+
+  /* side buttons */
+  #sideBtns { position: absolute; right: 10px; top: 74px; display: flex; flex-direction: column; gap: 8px; z-index: 6; }
+  .btn { font-family: inherit; font-weight: 800; color: #fff; border: none; cursor: pointer;
+    background: linear-gradient(180deg, #ff7a2f, #e04e00); border-radius: 12px;
+    padding: 12px 22px; font-size: 18px; letter-spacing: .02em;
+    box-shadow: 0 5px 0 #8f2f00, 0 8px 16px rgba(0,0,0,.35); text-shadow: 0 1px 2px rgba(0,0,0,.35); }
+  .btn:active { transform: translateY(4px); box-shadow: 0 1px 0 #8f2f00, 0 4px 8px rgba(0,0,0,.35); }
+  .btn.blue { background: linear-gradient(180deg, #22b573, #0e8a52); box-shadow: 0 5px 0 #0a5c38, 0 8px 16px rgba(0,0,0,.35); }
+  .btn.blue:active { box-shadow: 0 1px 0 #0a5c38, 0 4px 8px rgba(0,0,0,.35); }
+  .btn.green { background: linear-gradient(180deg, #ffc93c, #f59e0b); color: #4a2500; text-shadow: none; box-shadow: 0 5px 0 #9a6200, 0 8px 16px rgba(0,0,0,.35); }
+  .btn.green:active { box-shadow: 0 1px 0 #9a6200, 0 4px 8px rgba(0,0,0,.35); }
+  .btn.ghost { background: rgba(60,25,5,.82); box-shadow: 0 4px 0 rgba(0,0,0,.4); border: 1px solid rgba(255,200,80,.5); }
+  .btn.small { padding: 8px 12px; font-size: 14px; border-radius: 10px; }
+  .btn:disabled { opacity: .45; cursor: default; transform: none; }
+
+  /* tutorial bar */
+  #tutorialBar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+    width: min(92%, 640px); background: rgba(60,25,5,.93); border: 2px solid #ffc93c;
+    border-radius: 14px; padding: 12px 14px; z-index: 7; text-align: center;
+    box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+  #tutorialBar .step { font-size: 12px; color: #ffcf5c; font-weight: 800; letter-spacing: .15em; }
+  #tutorialText { font-size: 18px; font-weight: 700; margin: 4px 0 10px; line-height: 1.35; }
+
+  /* overlays */
+  .overlay { position: absolute; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+    background: rgba(43,22,8,.66); backdrop-filter: blur(2px); padding: 16px; }
+  .card { width: min(94%, 560px); max-height: 96%; overflow-y: auto; text-align: center;
+    background: linear-gradient(180deg, #fff6dd, #ffe3a1); color: #4a2500;
+    border: 2px solid rgba(255,140,26,.6);
+    border-radius: 20px; padding: 22px 22px 26px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+  .card h1 { font-size: 42px; font-weight: 900; letter-spacing: .02em; line-height: 1.05;
+    background: linear-gradient(180deg, #ff5a2a, #e04e00 55%, #7cb518); -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: 0 4px 0 rgba(0,0,0,.08); }
+  .card h2 { font-size: 32px; font-weight: 900; margin-bottom: 6px; color: #4a2500; }
+  .card .sub { color: #7a4a1f; font-size: 16px; margin: 8px 0 14px; line-height: 1.45; }
+  .fruitEmoji { font-size: 52px; line-height: 1; display: inline-block; transform: rotate(-2deg); }
+  .howto { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 14px 0 2px; }
+  .howChip { background: rgba(255,255,255,.65); border: 1px solid rgba(224,78,0,.25);
+    border-radius: 999px; padding: 7px 12px; font-size: 13px; font-weight: 800; color: #7a4a1f; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 14px 0; }
+  .chip { background: rgba(255,255,255,.65); border: 1px solid rgba(224,78,0,.25); border-radius: 12px; padding: 8px 12px; min-width: 96px; }
+  .chip .lbl { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #c2570a; font-weight: 700; }
+  .chip .val { font-size: 20px; font-weight: 900; color: #4a2500; }
+  .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 16px; }
+  #menuBest { color: #7a4a1f; font-size: 14px; }
+  .bigScore { font-size: 56px; font-weight: 900; line-height: 1; color: #e04e00;
+    text-shadow: 0 4px 0 rgba(0,0,0,.12); margin: 6px 0; }
+  #newBestBadge { display: inline-block; background: linear-gradient(180deg, #ffe29a, #ffb347); color: #5a2d00;
+    font-weight: 900; border-radius: 999px; padding: 6px 16px; font-size: 16px; margin: 6px 0;
+    box-shadow: 0 4px 14px rgba(255,180,60,.5); animation: pop .5s ease; }
+  @keyframes pop { 0% { transform: scale(.5); } 60% { transform: scale(1.15); } 100% { transform: scale(1); } }
+  .statsGrid { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 12px 0 4px; }
+  .note { font-size: 13px; color: #8a5a2b; margin-top: 12px; line-height: 1.5; }
+  .fruitList { text-align: left; font-size: 14px; line-height: 1.7; color: #7a4a1f; margin: 10px auto 0; max-width: 440px; }
+  .fruitList b { color: #c2570a; }
+  #dailyStatus { font-size: 14px; font-weight: 700; color: #0e8a52; margin-top: 8px; min-height: 18px; }
+  @media (max-width: 640px) {
+    .card h1 { font-size: 32px; } .card h2 { font-size: 26px; }
+    .stat .val { font-size: 17px; } .stat .lbl { font-size: 9px; }
+    .btn { font-size: 16px; padding: 11px 18px; }
+    #tutorialText { font-size: 15px; }
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="game">
+    <canvas id="boardCanvas" width="960" height="600" tabindex="0" aria-label="Fruit Slice Frenzy game. Drag your mouse or finger across the fruit to slice it. Do not slice the bombs."></canvas>
+    <div id="liveRegion" aria-live="polite"></div>
+
+    <div id="hud">
+      <div class="stat"><div class="lbl">Score</div><div class="val" id="hudScore">0</div></div>
+      <div class="stat"><div class="lbl">Best</div><div class="val" id="hudBest">0</div></div>
+      <div class="stat"><div class="lbl">Level</div><div class="val" id="hudLevel">1</div></div>
+      <div class="stat" id="hudTime"><div class="lbl">Time</div><div class="val" id="hudTimeVal">60s</div></div>
+      <div class="stat" id="hudLives"><div class="lbl">Lives</div><div class="val" id="hudLivesVal">&#10084;&#10084;&#10084;</div></div>
+      <div class="stat" id="hudCombo"><div class="lbl">Combo</div><div class="val" id="hudComboVal">x1</div></div>
+    </div>
+
+    <div id="targetBar"><div id="targetFill"></div><span id="targetLabel">TARGET 300</span></div>
+
+    <div id="sideBtns">
+      <button class="btn ghost small" id="btnPause" type="button">&#9208; Pause</button>
+      <button class="btn ghost small" id="btnSound" type="button">&#128266; Sound: On</button>
+      <button class="btn ghost small" id="btnRestart" type="button">&#8635; Restart</button>
+    </div>
+
+    <div id="tutorialBar" class="hidden">
+      <div class="step">HOW TO PLAY</div>
+      <div id="tutorialText"></div>
+      <button class="btn blue small" id="btnSkipTutorial" type="button" style="margin-top:8px;">Got it &#10005;</button>
+    </div>
+
+    <div class="overlay" id="menuOverlay">
+      <div class="card">
+        <div class="fruitEmoji">&#127826;&#127822;&#127817;</div>
+        <h1>FRUIT SLICE FRENZY</h1>
+        <p class="sub">Fruits fly up from the market stall — swipe across them to
+        slice! Chain slices in one swipe for combo multipliers up to x5.
+        Never slice a bomb, and never let a fruit fall unsliced.</p>
+        <div class="chips">
+          <div class="chip"><div class="lbl">Best Score</div><div class="val" id="menuBestScore">0</div></div>
+          <div class="chip"><div class="lbl">Rank</div><div class="val" id="menuRank">Rookie</div></div>
+          <div class="chip"><div class="lbl">Best Level</div><div class="val" id="menuBestLevel">1</div></div>
+          <div class="chip"><div class="lbl">Streak</div><div class="val" id="menuStreak">0</div></div>
+        </div>
+        <div class="row"><button class="btn" id="btnPlay" type="button">&#9654; Play</button></div>
+        <div class="row"><button class="btn green small" id="btnDaily" type="button">&#127873; Daily Bonus</button></div>
+        <p id="dailyStatus"></p>
+        <p id="menuBest">Best score: 0</p>
+        <div class="howto">
+          <span class="howChip">1 &#9997; Drag to slice</span>
+          <span class="howChip">2 &#11088; Chain combos to x5</span>
+          <span class="howChip">3 &#128163; Never touch a bomb</span>
+        </div>
+        <div class="fruitList">
+          <b>Points:</b> &#127822; Apple 10 &nbsp; &#127818; Orange 20 &nbsp; &#127826; Strawberry 30<br>
+          &#127821; Pineapple 40 &nbsp; &#127817; Watermelon 50 &nbsp; &#128163; Bomb = lose a life!<br>
+          <b>Round:</b> 60 seconds — reach the level target to advance.
+        </div>
+        <p class="note">Tip: one long swipe through several fruits pays more than
+        many short swipes — the combo multiplier grows with every fruit
+        sliced in the same swipe.</p>
+      </div>
+    </div>
+
+    <div class="overlay hidden" id="pauseOverlay">
+      <div class="card">
+        <h2>Paused</h2>
+        <p class="sub">Take a breather — the fruit is frozen mid-air.</p>
+        <div class="chips">
+          <div class="chip"><div class="lbl">Score</div><div class="val" id="pauseScore">0</div></div>
+          <div class="chip"><div class="lbl">Level</div><div class="val" id="pauseLevel">1</div></div>
+          <div class="chip"><div class="lbl">Lives</div><div class="val" id="pauseLives">3</div></div>
+          <div class="chip"><div class="lbl">Time Left</div><div class="val" id="pauseTime">60s</div></div>
+        </div>
+        <div class="row">
+          <button class="btn" id="btnResume" type="button">&#9654; Resume</button>
+          <button class="btn blue" id="btnRestartPause" type="button">&#8635; Restart</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="overlay hidden" id="resultsOverlay">
+      <div class="card">
+        <h2 id="resultsTitle">Game Over</h2>
+        <div><span id="newBestBadge" class="hidden">&#9733; NEW BEST! &#9733;</span></div>
+        <div class="bigScore" id="finalScore">0</div>
+        <p class="sub" id="resultsSub"></p>
+        <div class="statsGrid">
+          <div class="chip"><div class="lbl">Level Reached</div><div class="val" id="finalLevel">1</div></div>
+          <div class="chip"><div class="lbl">Fruits Sliced</div><div class="val" id="finalSliced">0</div></div>
+          <div class="chip"><div class="lbl">Best Combo</div><div class="val" id="finalBestCombo">x1</div></div>
+          <div class="chip"><div class="lbl">Level Bonus</div><div class="val" id="finalBonus">+0</div></div>
+          <div class="chip"><div class="lbl">Best Score</div><div class="val" id="finalBest">0</div></div>
+          <div class="chip"><div class="lbl">Rank</div><div class="val" id="finalRank">Rookie</div></div>
+        </div>
+        <div class="row">
+          <button class="btn" id="btnRetry" type="button">&#8635; Retry</button>
+          <button class="btn green hidden" id="btnNextLevel" type="button">Next Level &#9654;</button>
+          <button class="btn blue" id="btnMenu" type="button">Menu</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+"use strict";
+// __PURE_LOGIC_START__
+var SAVE_KEY = "fruitslice_save_v1";
+var W = 960, H = 600;
+var GRAVITY = 900; // px/s^2 — fruits arc up and fall back down
+var START_LIVES = 3;
+var ROUND_SECONDS = 60;
+var BOMB_R = 30;
+var FRUIT_TYPES = [
+  { type: "apple", points: 10, r: 28, color: "#ef4444", flesh: "#ffe1e1" },
+  { type: "orange", points: 20, r: 32, color: "#f97316", flesh: "#ffe8cc" },
+  { type: "strawberry", points: 30, r: 26, color: "#e11d48", flesh: "#ffd6de" },
+  { type: "pineapple", points: 40, r: 36, color: "#facc15", flesh: "#fff7cc" },
+  { type: "watermelon", points: 50, r: 44, color: "#22c55e", flesh: "#fecdd3" }
+];
+var RANKS = [
+  { min: 0, name: "Rookie" },
+  { min: 300, name: "Fruit Slicer" },
+  { min: 800, name: "Sharp Blade" },
+  { min: 1500, name: "Fruit Master" },
+  { min: 2500, name: "Legend" }
+];
+
+function defaultSave() {
+  // v: save-schema version (migration ladder in loadSave). seed: PRNG seed,
+  // generated once from the clock — all gameplay randomness derives from it.
+  // streak: consecutive rounds finished without missing a fruit.
+  // dailyStreak / lastDaily: daily-bonus calendar (YYYY-MM-DD).
+  // pendingBonus: claimed daily bonus, added to the next round's score.
+  return { v: 1, seed: ((Date.now() % 2147483646) + 1), best: 0, level: 1,
+           muted: false, tutorialSeen: false, streak: 0, bestStreak: 0,
+           dailyStreak: 0, lastDaily: "", pendingBonus: 0 };
+}
+// Seeded PRNG (mulberry32) — ALL gameplay randomness comes from this, never Math.random().
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+// store: optional storage object ({getItem,setItem}); defaults to localStorage.
+// Tests inject a Map-backed fake; every access is try/catch-guarded.
+function loadSave(store) {
+  var s = defaultSave();
+  try {
+    var st = store || (typeof localStorage !== "undefined" ? localStorage : null);
+    if (!st) return s;
+    var raw = st.getItem(SAVE_KEY);
+    if (!raw) return s;
+    var p = JSON.parse(raw);
+    if (!p || typeof p !== "object") return s;
+    // migration ladder: v0 (no version field) -> v1: keep the fields, stamp v:1.
+    if (typeof p.v !== "number") p.v = 1;
+    if (typeof p.seed === "number" && p.seed > 0) s.seed = Math.floor(p.seed);
+    if (typeof p.best === "number") s.best = Math.max(0, Math.floor(p.best));
+    if (typeof p.level === "number") s.level = Math.max(1, Math.floor(p.level));
+    if (typeof p.muted === "boolean") s.muted = p.muted;
+    if (typeof p.tutorialSeen === "boolean") s.tutorialSeen = p.tutorialSeen;
+    if (typeof p.streak === "number") s.streak = Math.max(0, Math.floor(p.streak));
+    if (typeof p.bestStreak === "number") s.bestStreak = Math.max(0, Math.floor(p.bestStreak));
+    if (typeof p.dailyStreak === "number") s.dailyStreak = Math.max(0, Math.floor(p.dailyStreak));
+    if (typeof p.lastDaily === "string") s.lastDaily = p.lastDaily;
+    if (typeof p.pendingBonus === "number") s.pendingBonus = Math.max(0, Math.floor(p.pendingBonus));
+  } catch (e) { /* corrupted save -> defaults */ }
+  return s;
+}
+function saveSave(s, store) {
+  try {
+    var st = store || (typeof localStorage !== "undefined" ? localStorage : null);
+    if (!st) return false;
+    st.setItem(SAVE_KEY, JSON.stringify(s));
+    return true;
+  } catch (e) { return false; }
+}
+
+// --- rounds / levels ---
+function levelTarget(level) { return 300 * level; }
+function levelClearBonus(level, lives) { return 100 * level + 50 * lives; }
+function spawnInterval(level) { return Math.max(0.55, 1.15 - 0.07 * (level - 1)); }
+function bombChance(level) { return Math.min(0.08 + 0.01 * (level - 1), 0.20); }
+function roundComplete(score, level) { return score >= levelTarget(level); }
+
+// --- ranks ---
+function rankForScore(best) {
+  var name = RANKS[0].name;
+  for (var i = 0; i < RANKS.length; i++) {
+    if (best >= RANKS[i].min) name = RANKS[i].name;
+  }
+  return name;
+}
+
+// --- daily bonus ---
+function dailyBonusAmount(dailyStreak) {
+  return Math.min(100 + 50 * dailyStreak, 600);
+}
+function daysBetween(a, b) {
+  // whole days from date string a to date string b ("YYYY-MM-DD")
+  function parse(s) {
+    var p = String(s).split("-");
+    return Date.UTC(+p[0], +p[1] - 1, +p[2]);
+  }
+  return Math.round((parse(b) - parse(a)) / 86400000);
+}
+// Claims today's bonus into save.pendingBonus (added to the next round's
+// starting score). Returns { granted, amount }. Mutates save when granted.
+function claimDailyBonus(save, today) {
+  if (save.lastDaily === today) return { granted: false, amount: 0 };
+  var newStreak = (save.lastDaily && daysBetween(save.lastDaily, today) === 1)
+    ? save.dailyStreak + 1 : 0;
+  var amount = dailyBonusAmount(newStreak);
+  save.dailyStreak = newStreak;
+  save.lastDaily = today;
+  save.pendingBonus = (save.pendingBonus || 0) + amount;
+  return { granted: true, amount: amount };
+}
+
+// --- spawning (seeded: fixed rng call order — bomb roll, type, x, vy, vx, rot, spin) ---
+function spawnFruit(rng, level) {
+  var isBomb = rng() < bombChance(level);
+  var type = "bomb", points = 0, r = BOMB_R, color = "#1f2937", flesh = "#374151";
+  if (!isBomb) {
+    var ft = FRUIT_TYPES[Math.floor(rng() * FRUIT_TYPES.length)];
+    type = ft.type; points = ft.points; r = ft.r; color = ft.color; flesh = ft.flesh;
+  }
+  var x = 80 + rng() * (W - 160);
+  var vy = -(620 + rng() * 260 + level * 15);
+  var vx = (rng() - 0.5) * 140;
+  return { type: type, isBomb: isBomb, points: points, r: r, color: color, flesh: flesh,
+           x: x, y: H + r, vx: vx, vy: vy, // born exactly fully below the bottom
+           // edge (y - r == H), so a small fruit is never instantly "missed"
+           rot: rng() * Math.PI * 2, spin: (rng() - 0.5) * 6, sliced: false };
+}
+
+// --- fruit physics: gravity arc; returns true once the fruit has fallen
+// fully below the bottom edge (a missed fruit if it was never sliced) ---
+function stepFruit(f, dt) {
+  f.vy += GRAVITY * dt;
+  f.x += f.vx * dt;
+  f.y += f.vy * dt;
+  f.rot += f.spin * dt;
+  return f.y - f.r > H;
+}
+
+// --- blade segment vs fruit circle: does the swipe segment touch the fruit? ---
+function segmentCircleIntersect(x1, y1, x2, y2, cx, cy, r) {
+  var dx = x2 - x1, dy = y2 - y1;
+  var len2 = dx * dx + dy * dy;
+  var t = 0;
+  if (len2 > 0) {
+    t = ((cx - x1) * dx + (cy - y1) * dy) / len2;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+  }
+  var px = x1 + t * dx, py = y1 + t * dy;
+  var ex = cx - px, ey = cy - py;
+  return ex * ex + ey * ey <= r * r;
+}
+
+// --- combo: the Nth fruit sliced in ONE swipe (1-based) ---
+// slices 1-2 pay x1, 3-4 pay x2, 5-6 pay x3, 7-8 pay x4, 9+ pay x5.
+function comboMultiplier(swipeCombo) {
+  if (swipeCombo < 1) return 1;
+  return 1 + Math.min(4, Math.floor((swipeCombo - 1) / 2));
+}
+function scoreForSlice(points, swipeCombo) {
+  return points * comboMultiplier(swipeCombo);
+}
+// __PURE_LOGIC_END__
+
+// ================= game (DOM + render + input) =================
+var canvas = document.getElementById("boardCanvas");
+var ctx = canvas.getContext("2d");
+// DPR backing store + setTransform; single uniform logical space 960x600,
+// letterboxed by the CSS aspect-ratio container (never independent X/Y scale).
+function resizeCanvas() {
+  var dpr = (window.devicePixelRatio || 1);
+  canvas.width = Math.round(960 * dpr);
+  canvas.height = Math.round(600 * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+resizeCanvas();
+if (window.addEventListener) window.addEventListener("resize", resizeCanvas);
+
+// prefers-reduced-motion gates ALL shake/particles/halves/juice (juice is opt-in).
+var REDUCED_MOTION = false;
+try {
+  REDUCED_MOTION = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+} catch (e) { REDUCED_MOTION = false; }
+
+var SAVE = loadSave();
+// scene machine: single string, boot -> menu -> playing -> paused -> results.
+// Side effects happen on the boundary (setState), never per frame.
+function setState(s) {
+  G.state = s;
+  try { window.__state = s; } catch (e) {}
+}
+try { window.__state = "menu"; } catch (e) {}
+
+var G = {
+  state: "menu",           // menu | playing | paused | results
+  level: 1,
+  score: 0, lives: START_LIVES, swipeCombo: 0, bestSwipeCombo: 0,
+  fruitsSliced: 0, missesThisRound: 0,
+  fruits: [], halves: [], particles: [], popups: [], rings: [],
+  shake: 0, frame: 0,
+  trail: [], slicing: false, spawnT: 0.5, timeLeft: ROUND_SECONDS,
+  target: levelTarget(1), levelCleared: false, levelBonus: 0,
+  tutorial: { active: false },
+  rng: mulberry32(SAVE.seed)
+};
+
+function $(id) { return document.getElementById(id); }
+function show(el, on) { el.classList.toggle("hidden", !on); }
+function announce(text) { var lr = $("liveRegion"); if (lr) lr.textContent = text; }
+function todayStr() {
+  var d = new Date();
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+}
+// juice: fruit halves + juice droplets (gated behind prefers-reduced-motion;
+// seeded RNG only).
+function spawnSliceJuice(f) {
+  if (REDUCED_MOTION) return;
+  var dir = (f.vx >= 0 ? 1 : -1);
+  for (var s = -1; s <= 1; s += 2) {
+    G.halves.push({ x: f.x, y: f.y, vx: f.vx * 0.4 + s * 90 * dir, vy: f.vy * 0.4 - 60,
+                    rot: f.rot, spin: s * 5, life: 0.9, max: 0.9,
+                    r: f.r, color: f.color, flesh: f.flesh, side: s, type: f.type });
+  }
+  for (var i = 0; i < 14; i++) {
+    var a = G.rng() * Math.PI * 2, sp = 80 + G.rng() * 260;
+    G.particles.push({ x: f.x, y: f.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 60,
+                       life: 0.4 + G.rng() * 0.4, max: 0.8, color: f.color, r: 2 + G.rng() * 4 });
+  }
+  // expanding juice ring — the "splat" that makes a slice feel juicy
+  G.rings.push({ x: f.x, y: f.y, r: f.r * 0.6, maxR: f.r * 1.9,
+                 life: 0.35, max: 0.35, color: f.color });
+}
+function spawnBombBurst(x, y) {
+  if (REDUCED_MOTION) return;
+  for (var i = 0; i < 22; i++) {
+    var a = G.rng() * Math.PI * 2, sp = 120 + G.rng() * 320;
+    G.particles.push({ x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40,
+                       life: 0.5 + G.rng() * 0.4, max: 0.9,
+                       color: ["#f97316", "#ef4444", "#facc15", "#1f2937"][i % 4], r: 3 + G.rng() * 5 });
+  }
+}
+
+// ---------- audio (tiny WebAudio blips, no files) ----------
+var AudioSys = {
+  ctx: null, enabled: true,
+  ensure: function () {
+    if (this.ctx) return this.ctx;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      this.ctx = new AC();
+    } catch (e) { this.ctx = null; }
+    return this.ctx;
+  },
+  unlock: function () {
+    var ac = this.ensure(); if (!ac) return;
+    try { if (ac.state === "suspended") ac.resume(); } catch (e) {}
+  },
+  tone: function (freq, dur, type, vol, slideTo, delay) {
+    if (SAVE.muted) return;
+    var ac = this.ensure(); if (!ac) return;
+    try {
+      var t0 = ac.currentTime + (delay || 0);
+      var o = ac.createOscillator(), g = ac.createGain();
+      o.type = type || "sine"; o.frequency.setValueAtTime(freq, t0);
+      if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+      g.gain.setValueAtTime(vol || 0.15, t0);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+      o.connect(g); g.connect(ac.destination);
+      o.start(t0); o.stop(t0 + dur);
+    } catch (e) {}
+  },
+  noise: function (dur, vol) {
+    if (SAVE.muted) return;
+    var ac = this.ensure(); if (!ac) return;
+    try {
+      var len = Math.floor(ac.sampleRate * dur);
+      var buf = ac.createBuffer(1, len, ac.sampleRate);
+      var data = buf.getChannelData(0);
+      for (var i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      var src = ac.createBufferSource(); src.buffer = buf;
+      var f = ac.createBiquadFilter(); f.type = "bandpass"; f.frequency.value = 2400;
+      var g = ac.createGain(); g.gain.value = vol || 0.25;
+      src.connect(f); f.connect(g); g.connect(ac.destination); src.start();
+    } catch (e) {}
+  },
+  slice: function () { this.noise(0.09, 0.3); this.tone(880, 0.09, "triangle", 0.1, 1320); },
+  bomb: function () { this.noise(0.35, 0.4); this.tone(120, 0.4, "sawtooth", 0.2, 40); },
+  miss: function () { this.tone(300, 0.35, "sawtooth", 0.12, 90); },
+  bonus: function () {
+    this.tone(523, 0.1, "sine", 0.15);
+    this.tone(659, 0.1, "sine", 0.15, 0, 0.09);
+    this.tone(784, 0.16, "sine", 0.15, 0, 0.18);
+  },
+  levelClear: function () {
+    this.tone(523, 0.12, "sine", 0.15);
+    this.tone(659, 0.12, "sine", 0.15, 0, 0.11);
+    this.tone(784, 0.12, "sine", 0.15, 0, 0.22);
+    this.tone(1046, 0.25, "sine", 0.15, 0, 0.33);
+  },
+  click: function () { this.tone(660, 0.06, "sine", 0.1); }
+};
+
+// ---------- save / menu ----------
+function persistSave() { saveSave(SAVE); }
+function updateMenu() {
+  $("menuBestScore").textContent = String(SAVE.best);
+  $("menuRank").textContent = rankForScore(SAVE.best);
+  $("menuBestLevel").textContent = String(Math.max(SAVE.level, 1));
+  $("menuStreak").textContent = String(SAVE.streak) + (SAVE.bestStreak > 0 ? " (best " + SAVE.bestStreak + ")" : "");
+  $("menuBest").textContent = "Best score: " + SAVE.best + "  •  Rank: " + rankForScore(SAVE.best);
+  var claimed = SAVE.lastDaily === todayStr();
+  $("btnDaily").disabled = claimed;
+  $("dailyStatus").textContent = claimed
+    ? "Daily bonus claimed — come back tomorrow for day " + (SAVE.dailyStreak + 1) + "!"
+    : "Daily bonus ready: +" + dailyBonusAmount(SAVE.lastDaily && daysBetween(SAVE.lastDaily, todayStr()) === 1 ? SAVE.dailyStreak + 1 : 0) + " points for your next round!";
+}
+function showMenu() {
+  setState("menu");
+  show($("resultsOverlay"), false);
+  show($("pauseOverlay"), false);
+  show($("tutorialBar"), false);
+  show($("menuOverlay"), true);
+  G.slicing = false; G.trail = [];
+  updateMenu();
+  updateHUD();
+}
+function toggleMute() {
+  SAVE.muted = !SAVE.muted;
+  persistSave();
+  $("btnSound").textContent = SAVE.muted ? "\uD83D\uDD07 Sound: Off" : "\uD83D\uDD0A Sound: On";
+  return SAVE.muted;
+}
+function claimDaily() {
+  var res = claimDailyBonus(SAVE, todayStr());
+  if (!res.granted) return res;
+  persistSave();
+  AudioSys.bonus();
+  $("dailyStatus").textContent = "Daily bonus claimed: +" + res.amount + " points for your next round!";
+  updateMenu();
+  announce("Daily bonus claimed, plus " + res.amount + " points for your next round.");
+  return res;
+}
+
+// ---------- tutorial (single hint on first play) ----------
+function startTutorial() {
+  G.tutorial.active = true;
+  $("tutorialText").textContent =
+    "Drag your mouse / finger across the fruit to slice it! Slice several in ONE swipe for a combo. NEVER slice a bomb, and don't let a fruit fall unsliced!";
+  show($("tutorialBar"), true);
+}
+function endTutorial() {
+  if (!G.tutorial.active) return;
+  G.tutorial.active = false;
+  SAVE.tutorialSeen = true;
+  persistSave();
+  show($("tutorialBar"), false);
+}
+
+// ---------- game flow ----------
+function startGame(level) {
+  G.level = level || 1;
+  G.score = SAVE.pendingBonus || 0; // claimed daily bonus starts the round
+  SAVE.pendingBonus = 0;
+  persistSave();
+  G.lives = START_LIVES; G.swipeCombo = 0; G.bestSwipeCombo = 0;
+  G.fruitsSliced = 0; G.missesThisRound = 0;
+  G.fruits = []; G.halves = []; G.particles = []; G.popups = [];
+  G.rings = []; G.shake = 0;
+  G.trail = []; G.slicing = false;
+  G.spawnT = 0.5; G.timeLeft = ROUND_SECONDS;
+  G.target = levelTarget(G.level);
+  G.levelCleared = false; G.levelBonus = 0;
+  setState("playing");
+  show($("menuOverlay"), false);
+  show($("resultsOverlay"), false);
+  show($("pauseOverlay"), false);
+  show($("tutorialBar"), false);
+  if (!SAVE.tutorialSeen) startTutorial();
+  updateHUD();
+}
+function loseLife(reason) {
+  G.lives--;
+  G.swipeCombo = 0;
+  if (reason === "bomb") {
+    // screen shake on a bomb (gated behind prefers-reduced-motion)
+    if (!REDUCED_MOTION) G.shake = 9;
+    AudioSys.bomb(); announce("Bomb sliced! " + G.lives + " lives left.");
+  }
+  else { AudioSys.miss(); announce("Fruit missed! " + G.lives + " lives left."); }
+  if (G.lives <= 0) { gameOver(reason); return; }
+  updateHUD();
+}
+function finishRoundStreak() {
+  // a round with zero missed fruits grows the streak; any miss resets it
+  if (G.missesThisRound === 0) {
+    SAVE.streak++;
+    if (SAVE.streak > SAVE.bestStreak) SAVE.bestStreak = SAVE.streak;
+  } else {
+    SAVE.streak = 0;
+  }
+}
+function gameOver(reason) {
+  setState("results");
+  G.levelCleared = false; G.levelBonus = 0;
+  finishRoundStreak();
+  var isBest = G.score > SAVE.best;
+  if (isBest) SAVE.best = G.score;
+  if (G.level > SAVE.level) SAVE.level = G.level;
+  persistSave();
+  $("resultsTitle").textContent = reason === "time" ? "Time's Up!" : "Game Over";
+  $("finalScore").textContent = String(G.score);
+  $("finalLevel").textContent = String(G.level);
+  $("finalSliced").textContent = String(G.fruitsSliced);
+  $("finalBestCombo").textContent = "x" + comboMultiplier(G.bestSwipeCombo);
+  $("finalBonus").textContent = "+0";
+  $("finalBest").textContent = String(SAVE.best);
+  $("finalRank").textContent = rankForScore(SAVE.best);
+  $("resultsSub").textContent = reason === "time"
+    ? "Time ran out on level " + G.level + " — you needed " + G.target + " points to advance."
+    : "Out of lives on level " + G.level + ". Watch the bombs and catch every fruit!";
+  show($("newBestBadge"), isBest && G.score > 0);
+  show($("btnNextLevel"), false);
+  show($("resultsOverlay"), true);
+  show($("tutorialBar"), false);
+  G.slicing = false; G.trail = [];
+  announce("Game over. Score " + G.score + ", best score " + SAVE.best + ".");
+  updateHUD();
+}
+function levelCleared() {
+  setState("results");
+  G.levelCleared = true;
+  G.levelBonus = levelClearBonus(G.level, G.lives);
+  G.score += G.levelBonus;
+  finishRoundStreak();
+  var isBest = G.score > SAVE.best;
+  if (isBest) SAVE.best = G.score;
+  if (G.level + 1 > SAVE.level) SAVE.level = G.level + 1;
+  persistSave();
+  AudioSys.levelClear();
+  $("resultsTitle").textContent = "Level " + G.level + " Clear!";
+  $("finalScore").textContent = String(G.score);
+  $("finalLevel").textContent = String(G.level);
+  $("finalSliced").textContent = String(G.fruitsSliced);
+  $("finalBestCombo").textContent = "x" + comboMultiplier(G.bestSwipeCombo);
+  $("finalBonus").textContent = "+" + G.levelBonus;
+  $("finalBest").textContent = String(SAVE.best);
+  $("finalRank").textContent = rankForScore(SAVE.best);
+  $("resultsSub").textContent = "Target " + G.target + " reached with " +
+    Math.ceil(G.timeLeft) + "s to spare! Level bonus +" + G.levelBonus +
+    " (100 x level + 50 x lives). Ready for level " + (G.level + 1) + "?";
+  show($("newBestBadge"), isBest && G.score > 0);
+  show($("btnNextLevel"), true);
+  show($("resultsOverlay"), true);
+  show($("tutorialBar"), false);
+  G.slicing = false; G.trail = [];
+  announce("Level " + G.level + " clear! Bonus " + G.levelBonus + ". Score " + G.score + ".");
+  updateHUD();
+}
+function pauseGame() {
+  if (G.state !== "playing") return;
+  setState("paused");
+  $("pauseScore").textContent = String(G.score);
+  $("pauseLevel").textContent = String(G.level);
+  $("pauseLives").textContent = String(G.lives);
+  $("pauseTime").textContent = Math.ceil(G.timeLeft) + "s";
+  show($("pauseOverlay"), true);
+}
+function resumeGame() {
+  if (G.state !== "paused") return;
+  setState("playing");
+  show($("pauseOverlay"), false);
+}
+
+// ---------- slicing ----------
+// One blade segment (last trail point -> new point). Returns the number of
+// fruits sliced by this segment; bombs cost a life immediately.
+function sliceSegment(x1, y1, x2, y2) {
+  var sliced = 0;
+  for (var i = G.fruits.length - 1; i >= 0; i--) {
+    var f = G.fruits[i];
+    if (f.sliced) continue;
+    if (!segmentCircleIntersect(x1, y1, x2, y2, f.x, f.y, f.r)) continue;
+    f.sliced = true;
+    G.fruits.splice(i, 1);
+    sliced++;
+    if (f.isBomb) {
+      spawnBombBurst(f.x, f.y);
+      G.popups.push({ x: f.x, y: f.y - 20, text: "BOOM!", life: 1.2, max: 1.2 });
+      loseLife("bomb");
+      if (G.state !== "playing") return sliced; // game over mid-swipe
+    } else {
+      G.swipeCombo++;
+      if (G.swipeCombo > G.bestSwipeCombo) G.bestSwipeCombo = G.swipeCombo;
+      var pts = scoreForSlice(f.points, G.swipeCombo);
+      var before = G.score;
+      G.score += pts;
+      G.fruitsSliced++;
+      spawnSliceJuice(f);
+      // milestone feedback: crossing the level target mid-round, and the
+      // combo landmarks (5th slice in one swipe = x3, 9th = x5 FRENZY)
+      if (before < G.target && G.score >= G.target) {
+        G.popups.push({ x: 480, y: 150, text: "TARGET REACHED!", life: 1.2, max: 1.2 });
+        AudioSys.bonus();
+      }
+      if (G.swipeCombo === 5) {
+        G.popups.push({ x: f.x, y: f.y - 30, text: "COMBO x3!", life: 1.0, max: 1.0 });
+      }
+      if (G.swipeCombo === 9) {
+        G.popups.push({ x: f.x, y: f.y - 30, text: "FRENZY! x5", life: 1.2, max: 1.2 });
+      }
+      G.popups.push({ x: f.x, y: f.y, text: "+" + pts +
+        (comboMultiplier(G.swipeCombo) > 1 ? "  x" + comboMultiplier(G.swipeCombo) : ""),
+        life: 0.9, max: 0.9 });
+      AudioSys.slice();
+      announce("Sliced " + f.type + " for " + pts + " points.");
+      if (G.tutorial.active) endTutorial();
+    }
+  }
+  updateHUD();
+  return sliced;
+}
+
+// ---------- per-frame step ----------
+function stepGame(dt) {
+  if (G.state !== "playing") return;
+  // round timer
+  G.timeLeft -= dt;
+  if (G.timeLeft <= 0) {
+    G.timeLeft = 0;
+    if (roundComplete(G.score, G.level)) levelCleared();
+    else gameOver("time");
+    return;
+  }
+  // spawning (seeded)
+  G.spawnT -= dt;
+  if (G.spawnT <= 0) {
+    G.fruits.push(spawnFruit(G.rng, G.level));
+    if (G.level >= 2 && G.rng() < 0.2 + 0.05 * G.level) {
+      G.fruits.push(spawnFruit(G.rng, G.level));
+    }
+    G.spawnT = spawnInterval(G.level) * (0.7 + G.rng() * 0.6);
+  }
+  // fruits: gravity arcs, missed fruit = lost life
+  for (var i = G.fruits.length - 1; i >= 0; i--) {
+    var f = G.fruits[i];
+    if (stepFruit(f, dt)) {
+      G.fruits.splice(i, 1);
+      if (!f.isBomb) {
+        G.missesThisRound++;
+        G.popups.push({ x: f.x, y: H - 30, text: "MISS!", life: 0.9, max: 0.9 });
+        loseLife("miss");
+        if (G.state !== "playing") return; // game over mid-frame
+      }
+      // a bomb falling off the bottom is harmless — no penalty
+    }
+  }
+  // halves (juice)
+  for (var hi = G.halves.length - 1; hi >= 0; hi--) {
+    var hf = G.halves[hi];
+    hf.vy += GRAVITY * dt; hf.x += hf.vx * dt; hf.y += hf.vy * dt;
+    hf.rot += hf.spin * dt; hf.life -= dt;
+    if (hf.life <= 0 || hf.y > H + 60) G.halves.splice(hi, 1);
+  }
+  // particles + popups
+  for (var pi = G.particles.length - 1; pi >= 0; pi--) {
+    var pt = G.particles[pi];
+    pt.vy += 700 * dt; pt.x += pt.vx * dt; pt.y += pt.vy * dt; pt.life -= dt;
+    if (pt.life <= 0) G.particles.splice(pi, 1);
+  }
+  for (var k = G.popups.length - 1; k >= 0; k--) {
+    G.popups[k].life -= dt;
+    if (G.popups[k].life <= 0) G.popups.splice(k, 1);
+  }
+  // juice rings (expand + fade)
+  for (var ri = G.rings.length - 1; ri >= 0; ri--) {
+    G.rings[ri].life -= dt;
+    if (G.rings[ri].life <= 0) G.rings.splice(ri, 1);
+  }
+  updateHUD();
+}
+function updateHUD() {
+  $("hudScore").textContent = String(G.score);
+  $("hudBest").textContent = String(Math.max(SAVE.best, G.score));
+  $("hudLevel").textContent = String(G.level);
+  $("hudTimeVal").textContent = Math.ceil(Math.max(0, G.timeLeft)) + "s";
+  var hearts = "";
+  for (var i = 0; i < G.lives; i++) hearts += "\u2764";
+  $("hudLivesVal").textContent = hearts || "\u2014";
+  $("hudComboVal").textContent = "x" + comboMultiplier(G.swipeCombo);
+  // target progress bar (score vs level target, capped at full)
+  var tf = $("targetFill");
+  if (tf) tf.style.width = Math.min(100, (G.score / Math.max(1, G.target)) * 100) + "%";
+  var tl = $("targetLabel");
+  if (tl) tl.textContent = "TARGET " + G.target;
+}
+
+// ---------- input ----------
+// Pointer: press-and-drag draws the blade; every move segment is tested
+// against every fruit. A fresh press starts a fresh swipe (combo reset).
+function canvasPos(e) {
+  var r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * 960 / r.width, y: (e.clientY - r.top) * 600 / r.height };
+}
+function onPointerDown(e) {
+  if (G.state !== "playing") return;
+  AudioSys.unlock();
+  var p = canvasPos(e);
+  G.slicing = true;
+  G.swipeCombo = 0;
+  G.trail = [p];
+  sliceSegment(p.x, p.y, p.x, p.y);
+  if (e.preventDefault) e.preventDefault();
+}
+function onPointerMove(e) {
+  if (G.state !== "playing" || !G.slicing) return;
+  var p = canvasPos(e);
+  var last = G.trail[G.trail.length - 1];
+  G.trail.push(p);
+  if (G.trail.length > 14) G.trail.shift();
+  sliceSegment(last.x, last.y, p.x, p.y);
+  if (e.preventDefault) e.preventDefault();
+}
+function onPointerUp(e) {
+  G.slicing = false;
+  G.trail = [];
+}
+canvas.addEventListener("pointerdown", onPointerDown);
+canvas.addEventListener("pointermove", onPointerMove);
+canvas.addEventListener("pointerup", onPointerUp);
+canvas.addEventListener("pointercancel", onPointerUp);
+
+// Keyboard: keys held in a Set, read inside update() — handlers never act directly.
+var keysDown = {};
+if (typeof window !== "undefined" && window.addEventListener) {
+  window.addEventListener("keydown", function (e) { keysDown[e.key] = true; });
+  window.addEventListener("keyup", function (e) { delete keysDown[e.key]; });
+}
+function handleKeys() {
+  if (keysDown[" "] || keysDown["Enter"]) {
+    delete keysDown[" "]; delete keysDown["Enter"];
+    if (G.state === "menu") startGame(SAVE.level);
+    else if (G.state === "results") {
+      if (G.levelCleared) startGame(G.level + 1);
+      else startGame(G.level);
+    }
+    else if (G.state === "paused") resumeGame();
+  }
+  if (keysDown["p"] || keysDown["P"]) {
+    delete keysDown["p"]; delete keysDown["P"];
+    if (G.state === "playing") pauseGame();
+    else if (G.state === "paused") resumeGame();
+  }
+  if (keysDown["m"] || keysDown["M"]) {
+    delete keysDown["m"]; delete keysDown["M"];
+    toggleMute();
+  }
+}
+// update() mutates state only; render() draws only.
+function update(dt) {
+  handleKeys();
+  stepGame(dt);
+}
+
+// ---------- buttons ----------
+$("btnPlay").addEventListener("click", function () { AudioSys.click(); startGame(SAVE.level); });
+$("btnDaily").addEventListener("click", function () { claimDaily(); });
+$("btnRetry").addEventListener("click", function () { AudioSys.click(); startGame(G.level); });
+$("btnNextLevel").addEventListener("click", function () { AudioSys.click(); startGame(G.level + 1); });
+$("btnMenu").addEventListener("click", function () { AudioSys.click(); showMenu(); });
+$("btnPause").addEventListener("click", function () { AudioSys.click(); pauseGame(); });
+$("btnResume").addEventListener("click", function () { AudioSys.click(); resumeGame(); });
+$("btnRestart").addEventListener("click", function () { AudioSys.click(); if (G.state === "playing" || G.state === "paused") startGame(G.level); });
+$("btnRestartPause").addEventListener("click", function () { AudioSys.click(); startGame(G.level); });
+$("btnSound").addEventListener("click", function () { toggleMute(); });
+$("btnSkipTutorial").addEventListener("click", function () { endTutorial(); });
+if (SAVE.muted) $("btnSound").textContent = "\uD83D\uDD07 Sound: Off";
+
+// ---------- render ----------
+function drawFruitBody(f) {
+  ctx.save();
+  ctx.translate(f.x, f.y);
+  ctx.rotate(f.rot);
+  // body
+  var g = ctx.createRadialGradient(-f.r * 0.3, -f.r * 0.3, f.r * 0.1, 0, 0, f.r);
+  g.addColorStop(0, "#ffffff");
+  g.addColorStop(0.25, f.color);
+  g.addColorStop(1, f.color);
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(0, 0, f.r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "rgba(0,0,0,0.18)"; ctx.lineWidth = 2;
+  ctx.stroke();
+  // type-specific decoration
+  if (f.type === "watermelon") {
+    ctx.strokeStyle = "rgba(0,80,20,0.55)"; ctx.lineWidth = 4;
+    for (var s = -1; s <= 1; s++) {
+      ctx.beginPath(); ctx.arc(s * f.r * 0.45, 0, f.r * 0.55, -Math.PI / 2.4, Math.PI / 2.4); ctx.stroke();
+    }
+  } else if (f.type === "pineapple") {
+    ctx.strokeStyle = "rgba(160,110,0,0.5)"; ctx.lineWidth = 2;
+    for (var d = -1; d <= 1; d++) {
+      ctx.beginPath(); ctx.moveTo(-f.r + 6, d * f.r * 0.5); ctx.lineTo(f.r - 6, -d * f.r * 0.5); ctx.stroke();
+    }
+    ctx.fillStyle = "#22c55e";
+    ctx.beginPath(); ctx.ellipse(0, -f.r - 2, 7, 12, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(-9, -f.r + 2, 6, 10, -0.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(9, -f.r + 2, 6, 10, 0.5, 0, Math.PI * 2); ctx.fill();
+  } else if (f.type === "strawberry") {
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    for (var q = 0; q < 7; q++) {
+      var sx = ((q * 37) % 29) - 14, sy = ((q * 53) % 29) - 12;
+      ctx.beginPath(); ctx.arc(sx * f.r / 26, sy * f.r / 26, 1.8, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = "#22c55e";
+    ctx.beginPath(); ctx.ellipse(0, -f.r + 2, 9, 5, 0, 0, Math.PI * 2); ctx.fill();
+  } else {
+    // apple / orange: leaf + stem
+    ctx.strokeStyle = "#7c4a12"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(0, -f.r + 2); ctx.lineTo(0, -f.r - 8); ctx.stroke();
+    ctx.fillStyle = "#22c55e";
+    ctx.beginPath(); ctx.ellipse(8, -f.r - 4, 8, 4, -0.5, 0, Math.PI * 2); ctx.fill();
+  }
+  // shine
+  ctx.fillStyle = "rgba(255,255,255,0.45)";
+  ctx.beginPath(); ctx.ellipse(-f.r * 0.35, -f.r * 0.4, f.r * 0.22, f.r * 0.13, -0.6, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+function drawBomb(f) {
+  ctx.save();
+  ctx.translate(f.x, f.y);
+  ctx.rotate(f.rot);
+  var g = ctx.createRadialGradient(-f.r * 0.3, -f.r * 0.3, f.r * 0.1, 0, 0, f.r);
+  g.addColorStop(0, "#6b7280"); g.addColorStop(0.4, "#1f2937"); g.addColorStop(1, "#000000");
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(0, 0, f.r, 0, Math.PI * 2); ctx.fill();
+  // pulsing red warning ring — a bomb must read as dangerous at a glance
+  if (!REDUCED_MOTION) {
+    ctx.strokeStyle = "rgba(239,68,68,0.7)"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(0, 0, f.r + 5 + 3 * Math.sin((G.frame || 0) * 0.15), 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.strokeStyle = "#facc15"; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(0, -f.r); ctx.quadraticCurveTo(10, -f.r - 14, 18, -f.r - 10); ctx.stroke();
+  // spark (skipped under reduced motion — no flicker)
+  if (!REDUCED_MOTION) {
+    ctx.fillStyle = "#fde047";
+    ctx.beginPath(); ctx.arc(18, -f.r - 10, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#f97316";
+    ctx.beginPath(); ctx.arc(18, -f.r - 10, 2.5, 0, Math.PI * 2); ctx.fill();
+  }
+  // skull-ish warning: white eyes + crossbones dot
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath(); ctx.arc(-9, -4, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(9, -4, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#1f2937";
+  ctx.beginPath(); ctx.arc(-9, -4, 2, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(9, -4, 2, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+function drawHalf(hf) {
+  ctx.save();
+  ctx.translate(hf.x, hf.y);
+  ctx.rotate(hf.rot);
+  ctx.globalAlpha = Math.max(0, hf.life / hf.max);
+  // outer skin semicircle
+  ctx.fillStyle = hf.color;
+  ctx.beginPath();
+  ctx.arc(0, 0, hf.r, hf.side > 0 ? -Math.PI / 2 : Math.PI / 2,
+          hf.side > 0 ? Math.PI / 2 : Math.PI * 1.5);
+  ctx.closePath(); ctx.fill();
+  // flesh semicircle, slightly smaller
+  ctx.fillStyle = hf.flesh;
+  ctx.beginPath();
+  ctx.arc(0, 0, hf.r * 0.82, hf.side > 0 ? -Math.PI / 2 : Math.PI / 2,
+          hf.side > 0 ? Math.PI / 2 : Math.PI * 1.5);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+function render() {
+  G.frame++;
+  // screen shake (bomb): deterministic sine wobble, decays every frame,
+  // gated behind prefers-reduced-motion; never consumes the seeded RNG
+  if (!REDUCED_MOTION && G.shake > 0) {
+    var sx = Math.sin(G.frame * 1.7) * G.shake * 0.5;
+    var sy = Math.cos(G.frame * 1.3) * G.shake * 0.5;
+    canvas.style.transform = "translate(" + sx.toFixed(1) + "px," + sy.toFixed(1) + "px)";
+    G.shake = Math.max(0, G.shake - 0.6);
+  } else if (canvas.style.transform) {
+    canvas.style.transform = "";
+  }
+  // warm market backdrop
+  var bg = ctx.createLinearGradient(0, 0, 0, 600);
+  bg.addColorStop(0, "#ffe9b8"); bg.addColorStop(0.55, "#ffd98a"); bg.addColorStop(1, "#f7b95c");
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, 960, 600);
+  // striped market awning across the top
+  for (var ax = 0; ax < 12; ax++) {
+    ctx.fillStyle = ax % 2 === 0 ? "#e04e00" : "#fff6dd";
+    ctx.beginPath();
+    ctx.moveTo(ax * 80, 0); ctx.lineTo(ax * 80 + 80, 0);
+    ctx.lineTo(ax * 80 + 68, 54); ctx.lineTo(ax * 80 + 12, 54);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.fillStyle = "#8f2f00"; ctx.fillRect(0, 54, 960, 6);
+  // wooden stall counter along the bottom
+  ctx.fillStyle = "#a16207"; ctx.fillRect(0, 540, 960, 60);
+  ctx.fillStyle = "#92400e"; ctx.fillRect(0, 540, 960, 6);
+  ctx.fillStyle = "rgba(255,255,255,0.18)";
+  for (var px = 0; px < 960; px += 120) ctx.fillRect(px + 10, 552, 100, 5);
+  // hanging fruit basket decorations (deterministic, same every frame)
+  var deco = [
+    { x: 60, y: 120, c: "#ef4444" }, { x: 900, y: 110, c: "#f97316" },
+    { x: 110, y: 220, c: "#22c55e" }, { x: 855, y: 230, c: "#facc15" }
+  ];
+  for (var di = 0; di < deco.length; di++) {
+    ctx.fillStyle = deco[di].c;
+    ctx.beginPath(); ctx.arc(deco[di].x, deco[di].y, 14, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#22c55e";
+    ctx.beginPath(); ctx.ellipse(deco[di].x + 6, deco[di].y - 14, 7, 4, -0.5, 0, Math.PI * 2); ctx.fill();
+  }
+  // level + target label
+  ctx.fillStyle = "rgba(74,37,0,0.75)";
+  ctx.font = "900 20px 'Trebuchet MS', Verdana, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("LEVEL " + G.level + "  •  TARGET " + G.target + "  •  " +
+    Math.ceil(Math.max(0, G.timeLeft)) + "s LEFT", 480, 92);
+
+  for (var fi = 0; fi < G.fruits.length; fi++) {
+    var f = G.fruits[fi];
+    if (f.isBomb) drawBomb(f); else drawFruitBody(f);
+  }
+  for (var hi = 0; hi < G.halves.length; hi++) drawHalf(G.halves[hi]);
+
+  // juice particles (skipped entirely under prefers-reduced-motion)
+  for (var q = 0; q < G.particles.length; q++) {
+    var pt = G.particles[q];
+    ctx.globalAlpha = Math.max(0, pt.life / pt.max);
+    ctx.fillStyle = pt.color;
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // juice rings (expand + fade)
+  for (var ri2 = 0; ri2 < G.rings.length; ri2++) {
+    var rg = G.rings[ri2];
+    var rt = 1 - rg.life / rg.max;
+    ctx.globalAlpha = Math.max(0, rg.life / rg.max) * 0.8;
+    ctx.strokeStyle = rg.color; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(rg.x, rg.y, rg.r + (rg.maxR - rg.r) * rt, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // blade trail: bright white core + orange glow, fading along its length
+  if (G.trail.length > 1) {
+    for (var pass = 0; pass < 2; pass++) {
+      ctx.beginPath();
+      ctx.moveTo(G.trail[0].x, G.trail[0].y);
+      for (var ti = 1; ti < G.trail.length; ti++) ctx.lineTo(G.trail[ti].x, G.trail[ti].y);
+      ctx.strokeStyle = pass === 0 ? "rgba(255,140,26,0.55)" : "rgba(255,255,255,0.95)";
+      ctx.lineWidth = pass === 0 ? 10 : 4;
+      ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.stroke();
+    }
+  }
+
+  // score popups (milestones get bigger text + their own colour)
+  ctx.textAlign = "center";
+  for (var k = 0; k < G.popups.length; k++) {
+    var p = G.popups[k];
+    var a = Math.max(0, p.life / p.max);
+    ctx.globalAlpha = a;
+    var big = (p.text === "FRENZY! x5" || p.text === "TARGET REACHED!");
+    ctx.font = big ? "900 34px 'Trebuchet MS', Verdana, sans-serif"
+                   : "900 28px 'Trebuchet MS', Verdana, sans-serif";
+    ctx.fillStyle = p.text === "BOOM!" ? "#dc2626"
+      : p.text === "FRENZY! x5" ? "#b45309"
+      : p.text === "TARGET REACHED!" ? "#0e8a52"
+      : p.text === "MISS!" ? "#7a4a1f" : "#e04e00";
+    ctx.fillText(p.text, p.x, p.y - (p.max - p.life) * 40);
+  }
+  ctx.globalAlpha = 1;
+
+  // round-start hint
+  if (G.state === "playing" && G.fruits.length === 0 && G.timeLeft > ROUND_SECONDS - 2) {
+    ctx.font = "800 20px 'Trebuchet MS', Verdana, sans-serif";
+    ctx.fillStyle = "rgba(74,37,0,0.9)";
+    ctx.fillText("Get ready — fruit incoming!", 480, 300);
+  }
+}
+
+// ---------- main loop: fixed-timestep accumulator (60 Hz) ----------
+// Frame delta is clamped to <=250 ms BEFORE accumulating, so a tab-switch
+// or hitch can never spiral into a catch-up storm.
+var ACC = 0, LAST = 0;
+function loop(ts) {
+  requestAnimationFrame(loop);
+  if (!LAST) LAST = ts || 0;
+  var frameDt = ((ts || 0) - LAST) / 1000;
+  LAST = ts || 0;
+  if (!(frameDt > 0)) frameDt = 0.016;
+  if (frameDt > 0.25) frameDt = 0.25;
+  ACC += frameDt;
+  var steps = 0;
+  while (ACC >= 1 / 60 && steps < 5) { update(1 / 60); ACC -= 1 / 60; steps++; }
+  if (steps === 5) ACC = 0; // drop backlog rather than spiral
+  render();
+}
+// Auto-pause on tab hide; on return, reset the time baseline and zero the
+// accumulator so no stale delta leaks into the next frame.
+if (document.addEventListener) document.addEventListener("visibilitychange", function () {
+  if (document.hidden) { if (G.state === "playing") pauseGame(); }
+  else { LAST = 0; ACC = 0; }
+});
+
+updateMenu();
+updateHUD();
+render();
+requestAnimationFrame(loop);
+try { window.__gameReady = true; } catch (e) {}
+
+window.__FruitSliceTest = {
+  G: G, SAVE: SAVE, startGame: startGame, stepGame: stepGame,
+  sliceSegment: sliceSegment, loseLife: loseLife,
+  levelCleared: levelCleared, gameOver: gameOver, pauseGame: pauseGame,
+  resumeGame: resumeGame, showMenu: showMenu, toggleMute: toggleMute,
+  claimDaily: claimDaily, endTutorial: endTutorial,
+  spawnFruit: spawnFruit, stepFruit: stepFruit,
+  segmentCircleIntersect: segmentCircleIntersect,
+  comboMultiplier: comboMultiplier, scoreForSlice: scoreForSlice,
+  levelTarget: levelTarget, levelClearBonus: levelClearBonus,
+  spawnInterval: spawnInterval, bombChance: bombChance,
+  roundComplete: roundComplete, rankForScore: rankForScore,
+  dailyBonusAmount: dailyBonusAmount, daysBetween: daysBetween,
+  claimDailyBonus: claimDailyBonus, todayStr: todayStr,
+  loadSave: loadSave, saveSave: saveSave, defaultSave: defaultSave,
+  mulberry32: mulberry32, render: render, AudioSys: AudioSys,
+  update: update, setState: setState, keysDown: keysDown,
+  spawnSliceJuice: spawnSliceJuice, announce: announce, resizeCanvas: resizeCanvas,
+  FRUIT_TYPES: FRUIT_TYPES, RANKS: RANKS, W: W, H: H, GRAVITY: GRAVITY,
+  SAVE_KEY: SAVE_KEY, ROUND_SECONDS: ROUND_SECONDS, START_LIVES: START_LIVES
+};
+</script>
+</body>
+</html>
