@@ -1,0 +1,1201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Drift Race — Dodge Traffic, Grab Coins, Chase the Horizon!</title>
+<!--
+  Drift Race — original HTML5 top-down arcade racer.
+  100% code-drawn (Canvas 2D + CSS), no images, no audio files, no
+  external resources at all. Single file, plain vanilla JS, no
+  frameworks, no SDK, no ads, no external URLs. Saves in localStorage
+  only, save key "driftracer_save_v1".
+
+  How to play: steer your red car with your mouse / touch drag or the
+  Arrow keys. Dodge the traffic cars coming down the desert highway,
+  collect gold coins and nitro pickups (nitro = a brief speed burst +
+  score bonus). Distance in metres is your score; speed rises as you
+  go further. Every 500 m you level up and get faster still. Pass a
+  traffic car closely without crashing for a near-miss combo bonus.
+  You have 3 lives; a crash costs a life and gives you ~2 s of
+  invulnerability (your car flashes). Ranks run from Rookie to Legend
+  based on your best distance. Come back daily for a bonus that grows
+  with your streak. Sounds are tiny WebAudio oscillator/noise blips
+  with a mute toggle. No audio files.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; background: #2b1a12; overflow: hidden; }
+  body { font-family: "Trebuchet MS", "Segoe UI", Verdana, sans-serif; color: #fff;
+    display: flex; align-items: center; justify-content: center; }
+  #wrap { width: 100%; max-width: 960px; }
+  #game { position: relative; width: 100%; aspect-ratio: 960 / 600; max-height: 100vh;
+    margin: 0 auto; overflow: hidden; border-radius: 14px;
+    box-shadow: 0 18px 60px rgba(0,0,0,.6), 0 0 0 3px rgba(255,176,66,.35), 0 0 44px rgba(255,123,47,.25);
+    background: linear-gradient(180deg, #ffb347 0%, #ff8c3a 55%, #e85d3d 100%); }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  canvas:focus-visible { outline: 3px solid #ffd166; outline-offset: -3px; }
+  #liveRegion { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .hidden { display: none !important; }
+
+  /* HUD */
+  #hud { position: absolute; top: 0; left: 0; right: 0; display: flex; gap: 8px;
+    padding: 10px 12px 0; pointer-events: none; z-index: 5; }
+  .stat { flex: 1; background: rgba(43,26,18,.82); border: 1px solid rgba(255,209,102,.45);
+    border-radius: 12px; padding: 5px 6px 6px; text-align: center; min-width: 0;
+    box-shadow: 0 4px 12px rgba(0,0,0,.35); }
+  .stat .lbl { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #ffd166; font-weight: 700; }
+  .stat .val { font-size: 22px; font-weight: 900; line-height: 1.1; white-space: nowrap; }
+  #hudLives .val { color: #ff6b6b; letter-spacing: 2px; }
+  #hudCombo .val { color: #ffd166; }
+  #hudCoins .val { color: #ffd166; }
+
+  /* side buttons */
+  #sideBtns { position: absolute; right: 10px; top: 74px; display: flex; flex-direction: column; gap: 8px; z-index: 6; }
+  .btn { font-family: inherit; font-weight: 800; color: #fff; border: none; cursor: pointer;
+    background: linear-gradient(180deg, #e2483d, #a11f1f); border-radius: 12px;
+    padding: 12px 22px; font-size: 18px; letter-spacing: .02em;
+    box-shadow: 0 5px 0 #6e1414, 0 8px 16px rgba(0,0,0,.35); text-shadow: 0 1px 2px rgba(0,0,0,.35); }
+  .btn:active { transform: translateY(4px); box-shadow: 0 1px 0 #6e1414, 0 4px 8px rgba(0,0,0,.35); }
+  .btn.blue { background: linear-gradient(180deg, #3a9bdc, #1c6ea8); box-shadow: 0 5px 0 #124a72, 0 8px 16px rgba(0,0,0,.35); }
+  .btn.blue:active { box-shadow: 0 1px 0 #124a72, 0 4px 8px rgba(0,0,0,.35); }
+  .btn.green { background: linear-gradient(180deg, #3ed6a4, #1fae7d); box-shadow: 0 5px 0 #147a58, 0 8px 16px rgba(0,0,0,.35); }
+  .btn.green:active { box-shadow: 0 1px 0 #147a58, 0 4px 8px rgba(0,0,0,.35); }
+  .btn.ghost { background: rgba(43,26,18,.82); box-shadow: 0 4px 0 rgba(0,0,0,.4); border: 1px solid rgba(255,209,102,.45); }
+  .btn.small { padding: 8px 12px; font-size: 14px; border-radius: 10px; }
+  .btn:disabled { opacity: .45; cursor: default; transform: none; }
+
+  /* nitro / status chips */
+  #powerBar { position: absolute; left: 12px; top: 74px; z-index: 6; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+  .pchip { font-size: 13px; font-weight: 800; background: rgba(43,26,18,.82); border: 1px solid rgba(255,209,102,.6);
+    color: #ffd166; border-radius: 999px; padding: 4px 12px; box-shadow: 0 4px 12px rgba(0,0,0,.35); }
+
+  /* tutorial bar */
+  #tutorialBar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+    width: min(92%, 640px); background: rgba(43,26,18,.94); border: 2px solid #ffd166;
+    border-radius: 14px; padding: 12px 14px; z-index: 7; text-align: center;
+    box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+  #tutorialBar .step { font-size: 12px; color: #ffd166; font-weight: 800; letter-spacing: .15em; }
+  #tutorialText { font-size: 18px; font-weight: 700; margin: 4px 0 10px; line-height: 1.35; }
+
+  /* overlays */
+  .overlay { position: absolute; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+    background: rgba(43,26,18,.62); backdrop-filter: blur(2px); padding: 16px; }
+  .card { width: min(94%, 560px); max-height: 96%; overflow-y: auto; text-align: center;
+    background: linear-gradient(180deg, #4a2c1c, #2b1a12); border: 2px solid rgba(255,209,102,.45);
+    border-radius: 20px; padding: 22px 22px 26px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+  .card h1 { font-size: 42px; font-weight: 900; letter-spacing: .02em; line-height: 1.05;
+    background: linear-gradient(180deg, #ffe29a, #ffb347 55%, #ff7b2f); -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: 0 4px 0 rgba(0,0,0,.15); }
+  .card h2 { font-size: 32px; font-weight: 900; margin-bottom: 6px; }
+  .card .sub { color: #f2d8b3; font-size: 16px; margin: 8px 0 14px; line-height: 1.45; }
+  .carEmoji { font-size: 52px; line-height: 1; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 14px 0; }
+  .chip { background: rgba(255,255,255,.09); border: 1px solid rgba(255,255,255,.16); border-radius: 12px; padding: 8px 12px; min-width: 96px; }
+  .chip .lbl { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #ffd166; font-weight: 700; }
+  .chip .val { font-size: 20px; font-weight: 900; }
+  .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 16px; }
+  #menuBest { color: #f2d8b3; font-size: 14px; }
+  #menuRankWrap { margin: 2px auto 0; max-width: 420px; }
+  #menuRankBarOuter { height: 10px; background: rgba(255,255,255,.12); border-radius: 999px; overflow: hidden; }
+  #menuRankBar { height: 100%; width: 0%; background: linear-gradient(90deg, #ffd166, #ff7b2f); border-radius: 999px; }
+  #menuRankNext { font-size: 13px; color: #f2d8b3; margin-top: 6px; text-align: center; }
+  .bigScore { font-size: 56px; font-weight: 900; line-height: 1; color: #ffd166;
+    text-shadow: 0 4px 0 rgba(0,0,0,.3); margin: 6px 0; }
+  #newBestBadge { display: inline-block; background: linear-gradient(180deg, #ffe29a, #ffb347); color: #5a2d00;
+    font-weight: 900; border-radius: 999px; padding: 6px 16px; font-size: 16px; margin: 6px 0;
+    box-shadow: 0 4px 14px rgba(255,180,60,.5); animation: pop .5s ease; }
+  @keyframes pop { 0% { transform: scale(.5); } 60% { transform: scale(1.15); } 100% { transform: scale(1); } }
+  .statsGrid { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 12px 0 4px; }
+  .note { font-size: 13px; color: #d9b48a; margin-top: 12px; line-height: 1.5; }
+  .powerList { text-align: left; font-size: 14px; line-height: 1.7; color: #f2d8b3; margin: 10px auto 0; max-width: 420px; }
+  .powerList b { color: #ffd166; }
+  @media (max-width: 640px) {
+    .card h1 { font-size: 32px; } .card h2 { font-size: 26px; }
+    .stat .val { font-size: 17px; } .stat .lbl { font-size: 9px; }
+    .btn { font-size: 16px; padding: 11px 18px; }
+    #tutorialText { font-size: 15px; }
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="game">
+    <canvas id="boardCanvas" width="960" height="600" tabindex="0" aria-label="Drift Race game. Steer the red car with mouse, touch or arrow keys. Dodge traffic, collect coins and nitro."></canvas>
+    <div id="liveRegion" aria-live="polite"></div>
+
+    <div id="hud">
+      <div class="stat"><div class="lbl">Score</div><div class="val" id="hudScore">0</div></div>
+      <div class="stat"><div class="lbl">Distance</div><div class="val" id="hudDist">0 m</div></div>
+      <div class="stat"><div class="lbl">Level</div><div class="val" id="hudLevel">1</div></div>
+      <div class="stat" id="hudLives"><div class="lbl">Lives</div><div class="val" id="hudLivesVal">&#10084;&#10084;&#10084;</div></div>
+      <div class="stat" id="hudCombo"><div class="lbl">Combo</div><div class="val" id="hudComboVal">x1</div></div>
+      <div class="stat" id="hudCoins"><div class="lbl">Coins</div><div class="val" id="hudCoinsVal">0</div></div>
+    </div>
+
+    <div id="powerBar"></div>
+
+    <div id="sideBtns">
+      <button class="btn ghost small" id="btnPause" type="button">&#9208; Pause</button>
+      <button class="btn ghost small" id="btnSound" type="button">&#128266; Sound: On</button>
+      <button class="btn ghost small" id="btnRestart" type="button">&#8635; Restart</button>
+    </div>
+
+    <div id="tutorialBar" class="hidden">
+      <div class="step">HOW TO PLAY</div>
+      <div id="tutorialText"></div>
+      <button class="btn blue small" id="btnSkipTutorial" type="button" style="margin-top:8px;">Got it &#10005;</button>
+    </div>
+
+    <div class="overlay" id="menuOverlay">
+      <div class="card">
+        <div class="carEmoji">&#128663;</div>
+        <h1>DRIFT RACE</h1>
+        <p class="sub">Dodge the traffic on the sunset desert highway, grab gold
+        coins and nitro, and chase the horizon. Pass cars closely for
+        near-miss combo bonuses — just don't crash!</p>
+        <div class="chips">
+          <div class="chip"><div class="lbl">Best Distance</div><div class="val" id="menuBestDist">0 m</div></div>
+          <div class="chip"><div class="lbl">Rank</div><div class="val" id="menuRank">Rookie</div></div>
+          <div class="chip"><div class="lbl">Coins</div><div class="val" id="menuCoins">0</div></div>
+          <div class="chip"><div class="lbl">Daily Streak</div><div class="val" id="menuStreak">0</div></div>
+        </div>
+        <div id="menuRankWrap">
+          <div id="menuRankBarOuter"><div id="menuRankBar"></div></div>
+          <p id="menuRankNext"></p>
+        </div>
+        <p id="menuDaily" class="note"></p>
+        <div class="row"><button class="btn" id="btnPlay" type="button">&#9654; Play</button></div>
+        <p id="menuBest">Best distance: 0 m</p>
+        <div class="powerList">
+          <b>Pickups:</b> &#11088; Gold Coin (+25 pts) &nbsp; &#9889; Nitro (speed burst +50 pts)<br>
+          <b>Near-miss:</b> pass a car closely for a combo bonus (up to x5).<br>
+          <b>Level up:</b> every 500 m — faster road + bonus points.
+        </div>
+        <p class="note">Tip: steer early and stay in a free lane — traffic waves
+        always leave at least one lane open. Nitro is best saved for a
+        straight stretch.</p>
+      </div>
+    </div>
+
+    <div class="overlay hidden" id="pauseOverlay">
+      <div class="card">
+        <h2>Paused</h2>
+        <p class="sub">Take a breather — the highway is frozen.</p>
+        <div class="chips">
+          <div class="chip"><div class="lbl">Score</div><div class="val" id="pauseScore">0</div></div>
+          <div class="chip"><div class="lbl">Distance</div><div class="val" id="pauseDist">0 m</div></div>
+          <div class="chip"><div class="lbl">Lives</div><div class="val" id="pauseLives">3</div></div>
+        </div>
+        <div class="row">
+          <button class="btn" id="btnResume" type="button">&#9654; Resume</button>
+          <button class="btn blue" id="btnRestartPause" type="button">&#8635; Restart</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="overlay hidden" id="resultsOverlay">
+      <div class="card">
+        <h2 id="resultsTitle">Game Over</h2>
+        <div><span id="newBestBadge" class="hidden">&#9733; NEW BEST! &#9733;</span></div>
+        <div class="bigScore" id="finalScore">0</div>
+        <p class="sub" id="resultsSub"></p>
+        <div class="statsGrid">
+          <div class="chip"><div class="lbl">Distance</div><div class="val" id="finalDist">0 m</div></div>
+          <div class="chip"><div class="lbl">Level Reached</div><div class="val" id="finalLevel">1</div></div>
+          <div class="chip"><div class="lbl">Coins Collected</div><div class="val" id="finalCoins">0</div></div>
+          <div class="chip"><div class="lbl">Best Combo</div><div class="val" id="finalBestCombo">x1</div></div>
+          <div class="chip"><div class="lbl">Rank</div><div class="val" id="finalRank">Rookie</div></div>
+          <div class="chip"><div class="lbl">Best Distance</div><div class="val" id="finalBest">0 m</div></div>
+        </div>
+        <div class="row">
+          <button class="btn" id="btnRetry" type="button">&#8635; Retry</button>
+          <button class="btn blue" id="btnMenu" type="button">Menu</button>
+        </div>
+        <p class="note">Press Enter to retry instantly.</p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+"use strict";
+// __PURE_LOGIC_START__
+var SAVE_KEY = "driftracer_save_v1";
+var W = 960, H = 600;
+var ROAD_X0 = 180, ROAD_X1 = 780, ROAD_W = 600, LANES = 4, LANE_W = 150;
+var CAR_W = 56, CAR_H = 92, PLAYER_Y = 500, PLAYER_SPEED = 420;
+var BASE_SPEED_MPS = 20, SPEED_PER_M = 0.012, LEVEL_SPEED_BONUS = 2, MAX_SPEED_MPS = 60;
+var PX_PER_M = 12, NITRO_MULT = 1.5, NITRO_DURATION = 2.5;
+var START_LIVES = 3, INVULN_TIME = 2;
+var COMBO_STEP = 3; // every 3 near-misses raises the multiplier by 1
+var MAX_MULTIPLIER = 5;
+var COIN_SCORE = 25, NEAR_MISS_BASE = 25, NITRO_SCORE = 50;
+var LEVEL_METRES = 500;
+var NEAR_MISS_DX = 170; // pass within this many px sideways to count as a near-miss
+var TRAFFIC_COLORS = ["#2f6fd6", "#2fae5f", "#f2c230", "#f5f5f5"];
+var RANKS = [[0, "Rookie"], [500, "Amateur"], [1000, "Pro"],
+             [2000, "Expert"], [3500, "Master"], [5000, "Legend"]];
+
+function laneCenter(lane) { return ROAD_X0 + LANE_W / 2 + lane * LANE_W; }
+function defaultSave() {
+  // v: save-schema version (migration ladder in loadSave). seed: PRNG seed,
+  // generated once from the clock — all gameplay randomness derives from it.
+  // best: best distance in metres. coins: lifetime coins banked.
+  // lastDaily: "YYYY-MM-DD" of the last claimed daily bonus ("" = never).
+  return { v: 1, seed: ((Date.now() % 2147483646) + 1), best: 0, coins: 0,
+           muted: false, tutorialSeen: false, lastDaily: "", dailyStreak: 0, runs: 0 };
+}
+// Seeded PRNG (mulberry32) — ALL gameplay randomness comes from this, never Math.random().
+// (The single exception is the WebAudio white-noise buffer for the crash
+// sound, which is audio noise, not gameplay randomness.)
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+// store: optional storage object ({getItem,setItem}); defaults to localStorage.
+// Tests inject a Map-backed fake; every access is try/catch-guarded.
+function loadSave(store) {
+  var s = defaultSave();
+  try {
+    var st = store || (typeof localStorage !== "undefined" ? localStorage : null);
+    if (!st) return s;
+    var raw = st.getItem(SAVE_KEY);
+    if (!raw) return s;
+    var p = JSON.parse(raw);
+    if (!p || typeof p !== "object") return s;
+    // migration ladder: v0 (no version field) -> v1: keep the fields, stamp v:1.
+    if (typeof p.v !== "number") p.v = 1;
+    if (typeof p.seed === "number" && p.seed > 0) s.seed = Math.floor(p.seed);
+    if (typeof p.best === "number") s.best = Math.max(0, Math.floor(p.best));
+    if (typeof p.coins === "number") s.coins = Math.max(0, Math.floor(p.coins));
+    if (typeof p.muted === "boolean") s.muted = p.muted;
+    if (typeof p.tutorialSeen === "boolean") s.tutorialSeen = p.tutorialSeen;
+    if (typeof p.lastDaily === "string") s.lastDaily = p.lastDaily;
+    if (typeof p.dailyStreak === "number") s.dailyStreak = Math.max(0, Math.floor(p.dailyStreak));
+    if (typeof p.runs === "number") s.runs = Math.max(0, Math.floor(p.runs));
+  } catch (e) { /* corrupted save -> defaults */ }
+  return s;
+}
+function saveSave(s, store) {
+  try {
+    var st = store || (typeof localStorage !== "undefined" ? localStorage : null);
+    if (!st) return false;
+    st.setItem(SAVE_KEY, JSON.stringify(s));
+    return true;
+  } catch (e) { return false; }
+}
+
+// --- speed / distance / level curve ---
+function levelForDistance(d) { return Math.floor(Math.max(0, d) / LEVEL_METRES) + 1; }
+// Speed in metres/second: base + per-metre climb + a bonus per level reached, capped.
+function speedMps(d) {
+  var level = levelForDistance(d);
+  return Math.min(BASE_SPEED_MPS + SPEED_PER_M * d + LEVEL_SPEED_BONUS * (level - 1), MAX_SPEED_MPS);
+}
+function levelUpBonus(level) { return 50 * level; }
+// Traffic-wave gap tightens as you drive further: 55 m at the start,
+// shrinking to a 40 m floor past ~3,750 m, so late-game waves arrive
+// denser. The per-wave random spread (+0..55 m) is unchanged, and the
+// spawn pattern itself (1-3 cars, never all 4 lanes) is untouched.
+function waveGapBase(d) { return Math.max(40, 55 - Math.max(0, d) * 0.004); }
+function comboMultiplier(combo) {
+  return 1 + Math.min(MAX_MULTIPLIER - 1, Math.floor(combo / COMBO_STEP));
+}
+function nearMissScore(mult) { return NEAR_MISS_BASE * mult; }
+function rankForDistance(d) {
+  var name = RANKS[0][1];
+  for (var i = 0; i < RANKS.length; i++) if (d >= RANKS[i][0]) name = RANKS[i][1];
+  return name;
+}
+function rankNextAt(d) {
+  for (var i = 0; i < RANKS.length; i++) if (d < RANKS[i][0]) return RANKS[i][0];
+  return null; // already Legend
+}
+
+// --- daily bonus (pure: takes the save + a "YYYY-MM-DD" date string) ---
+function todayString() {
+  return new Date().toISOString().slice(0, 10);
+}
+function yesterdayString(today) {
+  var d = new Date(today + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+// Claims the daily bonus into the save. Streak grows only on consecutive
+// days; a missed day resets it to 1. Reward = 50 + 50*streak, capped at 500.
+function claimDaily(save, today) {
+  if (!save || typeof save !== "object") return { claimed: false, reward: 0, streak: 0 };
+  if (save.lastDaily === today) return { claimed: false, reward: 0, streak: save.dailyStreak || 0 };
+  var streak = (save.lastDaily === yesterdayString(today)) ? (save.dailyStreak || 0) + 1 : 1;
+  var reward = Math.min(50 + 50 * streak, 500);
+  save.dailyStreak = streak;
+  save.lastDaily = today;
+  save.coins = Math.max(0, save.coins || 0) + reward;
+  return { claimed: true, reward: reward, streak: streak };
+}
+
+// --- seeded spawn patterns ---
+// One traffic wave: 1-3 cars in distinct lanes (never all 4, so a free lane
+// always exists). Each car gets a colour index and a speed factor
+// (fraction of the player's speed — traffic is always slower than you).
+function spawnWave(rng) {
+  var r = rng();
+  var n = r < 0.55 ? 1 : (r < 0.9 ? 2 : 3);
+  var lanes = [0, 1, 2, 3];
+  for (var i = lanes.length - 1; i > 0; i--) {
+    var j = Math.floor(rng() * (i + 1));
+    var t = lanes[i]; lanes[i] = lanes[j]; lanes[j] = t;
+  }
+  var cars = [];
+  for (var k = 0; k < n; k++) {
+    cars.push({ lane: lanes[k], kind: "car",
+      color: Math.floor(rng() * TRAFFIC_COLORS.length),
+      speedFactor: 0.45 + rng() * 0.2 });
+  }
+  return cars;
+}
+// Deterministic pattern of `count` waves for a seed (used by tests and by
+// the game, which advances the same rng wave by wave).
+function generateSpawnPattern(seed, count) {
+  var rng = mulberry32(seed);
+  var waves = [];
+  for (var i = 0; i < count; i++) waves.push(spawnWave(rng));
+  return waves;
+}
+function coinLine(rng) {
+  return { lane: Math.floor(rng() * LANES), kind: "coin", n: 3 + Math.floor(rng() * 3) };
+}
+function nitroSpawn(rng) {
+  return { lane: Math.floor(rng() * LANES), kind: "nitro" };
+}
+
+// --- collision helpers (rects are {x, y, w, h} centre-based; 0.8 shrink
+// keeps crashes forgiving — a bumper graze is not a crash) ---
+function rectsOverlap(a, b) {
+  var aw = a.w * 0.4, ah = a.h * 0.4, bw = b.w * 0.4, bh = b.h * 0.4;
+  return Math.abs(a.x - b.x) < aw + bw && Math.abs(a.y - b.y) < ah + bh;
+}
+function checkCrash(player, car) { return rectsOverlap(player, car); }
+function nearMissEligible(player, car) {
+  return Math.abs(car.x - player.x) <= NEAR_MISS_DX;
+}
+// One crash: lose a life; game over when the last life is gone.
+function applyCrash(lives) {
+  var left = Math.max(0, lives - 1);
+  return { lives: left, gameOver: left <= 0 };
+}
+// __PURE_LOGIC_END__
+
+// ================= game (DOM + render + input) =================
+var canvas = document.getElementById("boardCanvas");
+var ctx = canvas.getContext("2d");
+// DPR backing store + setTransform; single uniform logical space 960x600,
+// letterboxed by the CSS aspect-ratio container (never independent X/Y scale).
+function resizeCanvas() {
+  var dpr = (window.devicePixelRatio || 1);
+  canvas.width = Math.round(960 * dpr);
+  canvas.height = Math.round(600 * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+resizeCanvas();
+if (window.addEventListener) window.addEventListener("resize", resizeCanvas);
+
+// prefers-reduced-motion gates ALL shake/particles/flash (juice is opt-in).
+var REDUCED_MOTION = false;
+try {
+  REDUCED_MOTION = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+} catch (e) { REDUCED_MOTION = false; }
+
+var SAVE = loadSave();
+// scene machine: single string, boot -> menu -> playing -> paused -> results.
+// Side effects happen on the boundary (setState), never per frame.
+function setState(s) {
+  G.state = s;
+  try { window.__state = s; } catch (e) {}
+}
+try { window.__state = "menu"; } catch (e) {}
+
+var G = {
+  state: "menu",           // menu | playing | paused | results
+  level: 1, distance: 0, bonusScore: 0, runCoins: 0,
+  lives: START_LIVES, combo: 0, bestCombo: 0,
+  player: { x: laneCenter(1), y: PLAYER_Y, w: CAR_W, h: CAR_H, tilt: 0 },
+  traffic: [], pickups: [], decor: [],
+  nitroT: 0, invulnT: 0, shakeT: 0, flashT: 0,
+  roadOffset: 0, nextCarAt: 0, nextCoinAt: 0, nextNitroAt: 0,
+  prevX: laneCenter(1),
+  tutorial: { active: false },
+  popups: [], particles: [], rng: mulberry32(SAVE.seed),
+  // separate visual-only rng (shake, flames, particles, decor) so visual
+  // juice never perturbs the gameplay spawn stream
+  visRng: mulberry32((SAVE.seed ^ 0x9e3779b9) >>> 0)
+};
+
+function $(id) { return document.getElementById(id); }
+function show(el, on) { el.classList.toggle("hidden", !on); }
+function announce(text) { var lr = $("liveRegion"); if (lr) lr.textContent = text; }
+function score() { return Math.floor(G.distance) + G.bonusScore; }
+// juice particles (gated behind prefers-reduced-motion); visual rng only.
+function spawnBurst(x, y, color, n) {
+  if (REDUCED_MOTION) return;
+  for (var i = 0; i < n; i++) {
+    var a = G.visRng() * Math.PI * 2, sp = 60 + G.visRng() * 220;
+    G.particles.push({ x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 80,
+                       life: 0.5 + G.visRng() * 0.4, max: 0.9, color: color, r: 3 + G.visRng() * 4 });
+  }
+}
+
+// ---------- audio (tiny WebAudio blips, no files) ----------
+var AudioSys = {
+  ctx: null, enabled: true,
+  ensure: function () {
+    if (this.ctx) return this.ctx;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      this.ctx = new AC();
+    } catch (e) { this.ctx = null; }
+    return this.ctx;
+  },
+  unlock: function () {
+    var ac = this.ensure(); if (!ac) return;
+    try { if (ac.state === "suspended") ac.resume(); } catch (e) {}
+  },
+  tone: function (freq, dur, type, vol, slideTo, delay) {
+    if (SAVE.muted) return;
+    var ac = this.ensure(); if (!ac) return;
+    try {
+      var t0 = ac.currentTime + (delay || 0);
+      var o = ac.createOscillator(), g = ac.createGain();
+      o.type = type || "sine"; o.frequency.setValueAtTime(freq, t0);
+      if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+      g.gain.setValueAtTime(vol || 0.15, t0);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+      o.connect(g); g.connect(ac.destination);
+      o.start(t0); o.stop(t0 + dur);
+    } catch (e) {}
+  },
+  noise: function (dur, vol) {
+    if (SAVE.muted) return;
+    var ac = this.ensure(); if (!ac) return;
+    try {
+      var len = Math.floor(ac.sampleRate * dur);
+      var buf = ac.createBuffer(1, len, ac.sampleRate);
+      var data = buf.getChannelData(0);
+      // NOTE: Math.random here fills an audio noise buffer only — it is
+      // not gameplay randomness (all gameplay randomness is mulberry32).
+      for (var i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      var src = ac.createBufferSource(); src.buffer = buf;
+      var f = ac.createBiquadFilter(); f.type = "bandpass"; f.frequency.value = 1200;
+      var g = ac.createGain(); g.gain.value = vol || 0.25;
+      src.connect(f); f.connect(g); g.connect(ac.destination); src.start();
+    } catch (e) {}
+  },
+  coin: function () { this.tone(880, 0.08, "sine", 0.15); this.tone(1318, 0.12, "sine", 0.15, 0, 0.07); },
+  nitro: function () { this.tone(300, 0.35, "sawtooth", 0.12, 1200); },
+  nearMiss: function () { this.tone(660, 0.07, "square", 0.08, 990); },
+  crash: function () { this.noise(0.3, 0.35); this.tone(220, 0.4, "sawtooth", 0.15, 60); },
+  levelUp: function () {
+    this.tone(523, 0.12, "sine", 0.15);
+    this.tone(659, 0.12, "sine", 0.15, 0, 0.11);
+    this.tone(784, 0.12, "sine", 0.15, 0, 0.22);
+    this.tone(1046, 0.25, "sine", 0.15, 0, 0.33);
+  },
+  click: function () { this.tone(660, 0.06, "sine", 0.1); }
+};
+
+// ---------- save / menu ----------
+function persistSave() { saveSave(SAVE); }
+function updateMenu() {
+  $("menuBestDist").textContent = SAVE.best + " m";
+  $("menuRank").textContent = rankForDistance(SAVE.best);
+  $("menuCoins").textContent = String(SAVE.coins);
+  $("menuStreak").textContent = String(SAVE.dailyStreak);
+  $("menuBest").textContent = "Best distance: " + SAVE.best + " m — " + rankForDistance(SAVE.best);
+  // rank progress: how far to the next rank, as a bar + a line of text
+  var next = rankNextAt(SAVE.best);
+  var bar = $("menuRankBar"), nxt = $("menuRankNext");
+  if (bar) bar.style.width = (next === null ? 100 : Math.min(100, Math.floor(SAVE.best / next * 100))) + "%";
+  if (nxt) {
+    nxt.textContent = next === null
+      ? "Legend — the top rank. Now chase a longer run!"
+      : (next - SAVE.best) + " m to " + rankForDistance(next) + " — best " + SAVE.best + " m";
+  }
+  // daily bonus hint: claimed today, or waiting on the first run
+  var daily = $("menuDaily");
+  if (daily) {
+    daily.textContent = SAVE.lastDaily === todayString()
+      ? "Daily bonus claimed — come back tomorrow for the next one!"
+      : "\uD83C\uDF81 Daily bonus waiting — your first run today claims +50–500 coins!";
+  }
+}
+function showMenu() {
+  setState("menu");
+  show($("resultsOverlay"), false);
+  show($("pauseOverlay"), false);
+  show($("tutorialBar"), false);
+  show($("menuOverlay"), true);
+  updateMenu();
+  updateHUD();
+}
+function toggleMute() {
+  SAVE.muted = !SAVE.muted;
+  persistSave();
+  $("btnSound").textContent = SAVE.muted ? "\uD83D\uDD07 Sound: Off" : "\uD83D\uDD0A Sound: On";
+  return SAVE.muted;
+}
+
+// ---------- tutorial (single hint on first play) ----------
+function startTutorial() {
+  G.tutorial.active = true;
+  $("tutorialText").textContent =
+    "Steer your red car with your mouse / touch drag or the Arrow keys. Dodge the traffic, grab gold coins and nitro — and pass cars closely for near-miss bonuses!";
+  show($("tutorialBar"), true);
+}
+function endTutorial() {
+  if (!G.tutorial.active) return;
+  G.tutorial.active = false;
+  SAVE.tutorialSeen = true;
+  persistSave();
+  show($("tutorialBar"), false);
+}
+
+// ---------- game flow ----------
+function makeDecor() {
+  var decor = [];
+  for (var i = 0; i < 14; i++) {
+    var left = G.rng() < 0.5;
+    decor.push({
+      x: left ? 20 + G.rng() * 130 : 800 + G.rng() * 130,
+      y: G.rng() * 600,
+      kind: G.rng() < 0.55 ? "cactus" : "rock",
+      s: 0.7 + G.rng() * 0.6
+    });
+  }
+  return decor;
+}
+function startGame() {
+  G.level = 1; G.distance = 0; G.bonusScore = 0; G.runCoins = 0;
+  G.lives = START_LIVES; G.combo = 0; G.bestCombo = 0;
+  G.player.x = laneCenter(1); G.player.y = PLAYER_Y; G.player.tilt = 0;
+  G.prevX = G.player.x;
+  G.traffic = []; G.pickups = []; G.popups = []; G.particles = [];
+  G.nitroT = 0; G.invulnT = 0; G.shakeT = 0; G.flashT = 0; G.roadOffset = 0;
+  G.nextCarAt = 60; G.nextCoinAt = 120; G.nextNitroAt = 350;
+  // Each run re-seeds from save.seed + run count, so every run has a
+  // different (but fully seeded, reproducible) spawn pattern.
+  G.rng = mulberry32((SAVE.seed + (SAVE.runs || 0)) >>> 0);
+  SAVE.runs = (SAVE.runs || 0) + 1;
+  G.decor = makeDecor();
+  // daily bonus is claimed once per day, on the first run of the day
+  var daily = claimDaily(SAVE, todayString());
+  if (daily.claimed) {
+    G.popups.push({ x: W / 2, y: 300, text: "DAILY BONUS +" + daily.reward + " COINS!",
+                    life: 2, max: 2 });
+    announce("Daily bonus claimed: " + daily.reward + " coins, streak " + daily.streak + ".");
+  }
+  persistSave();
+  setState("playing");
+  show($("menuOverlay"), false);
+  show($("resultsOverlay"), false);
+  show($("pauseOverlay"), false);
+  show($("tutorialBar"), false);
+  if (!SAVE.tutorialSeen) startTutorial();
+  updateHUD();
+}
+function crash() {
+  var res = applyCrash(G.lives);
+  G.lives = res.lives;
+  G.combo = 0;
+  G.invulnT = INVULN_TIME;
+  if (!REDUCED_MOTION) G.shakeT = 0.35;
+  if (!REDUCED_MOTION) G.flashT = 0.35;
+  spawnBurst(G.player.x, G.player.y, "#ff6b6b", 18);
+  AudioSys.crash();
+  announce("Crash! " + G.lives + " lives left.");
+  if (res.gameOver) { gameOver(); return; }
+  updateHUD();
+}
+function gameOver() {
+  setState("results");
+  var dist = Math.floor(G.distance);
+  var isBest = dist > SAVE.best;
+  if (isBest) SAVE.best = dist;
+  SAVE.coins += G.runCoins;
+  persistSave();
+  $("resultsTitle").textContent = "Game Over";
+  $("finalScore").textContent = String(score());
+  $("finalDist").textContent = dist + " m";
+  $("finalLevel").textContent = String(G.level);
+  $("finalCoins").textContent = String(G.runCoins);
+  $("finalBestCombo").textContent = "x" + comboMultiplier(G.bestCombo);
+  $("finalRank").textContent = rankForDistance(SAVE.best);
+  $("finalBest").textContent = SAVE.best + " m";
+  var next = rankNextAt(SAVE.best);
+  $("resultsSub").textContent = next === null
+    ? "Legend! You have reached the top rank — now chase a longer run."
+    : "You drove " + dist + " m. " + (next - SAVE.best) + " m more to reach " + rankForDistance(next) + "!";
+  show($("newBestBadge"), isBest && dist > 0);
+  show($("resultsOverlay"), true);
+  show($("tutorialBar"), false);
+  announce("Game over. Score " + score() + ", distance " + dist + " metres, best " + SAVE.best + ".");
+  updateHUD();
+}
+function pauseGame() {
+  if (G.state !== "playing") return;
+  setState("paused");
+  $("pauseScore").textContent = String(score());
+  $("pauseDist").textContent = Math.floor(G.distance) + " m";
+  $("pauseLives").textContent = String(G.lives);
+  show($("pauseOverlay"), true);
+}
+function resumeGame() {
+  if (G.state !== "paused") return;
+  setState("playing");
+  show($("pauseOverlay"), false);
+}
+
+// ---------- spawning (seeded rng; waves always leave a free lane) ----------
+function spawnCarWave() {
+  var wave = spawnWave(G.rng);
+  for (var i = 0; i < wave.length; i++) {
+    var c = wave[i];
+    G.traffic.push({ x: laneCenter(c.lane), y: -60 - G.rng() * 60,
+      w: CAR_W, h: CAR_H, color: TRAFFIC_COLORS[c.color],
+      speedFactor: c.speedFactor, counted: false });
+  }
+}
+function spawnCoinLine() {
+  var line = coinLine(G.rng);
+  for (var i = 0; i < line.n; i++) {
+    G.pickups.push({ x: laneCenter(line.lane), y: -40 - i * 56,
+      w: 34, h: 34, kind: "coin", taken: false });
+  }
+}
+function spawnNitro() {
+  var n = nitroSpawn(G.rng);
+  G.pickups.push({ x: laneCenter(n.lane), y: -40, w: 40, h: 52, kind: "nitro", taken: false });
+}
+
+// ---------- per-frame step ----------
+// Roadside decor scroll helper (shared by gameplay and the menu attract mode).
+function scrollDecor(dy) {
+  for (var di = 0; di < G.decor.length; di++) {
+    var dc = G.decor[di];
+    dc.y += dy;
+    if (dc.y > 630) { dc.y -= 660; dc.x = (G.visRng() < 0.5) ? 20 + G.visRng() * 130 : 800 + G.visRng() * 130; }
+  }
+}
+function stepGame(dt) {
+  if (G.state !== "playing") return;
+  // timers
+  if (G.nitroT > 0) { G.nitroT -= dt; if (G.nitroT < 0) G.nitroT = 0; }
+  if (G.invulnT > 0) { G.invulnT -= dt; if (G.invulnT < 0) G.invulnT = 0; }
+  if (G.shakeT > 0) { G.shakeT -= dt; if (G.shakeT < 0) G.shakeT = 0; }
+  if (G.flashT > 0) { G.flashT -= dt; if (G.flashT < 0) G.flashT = 0; }
+  // speed + distance (nitro multiplies the current speed)
+  var spd = speedMps(G.distance) * (G.nitroT > 0 ? NITRO_MULT : 1);
+  var pxSpeed = spd * PX_PER_M;
+  G.distance += spd * dt;
+  G.roadOffset += pxSpeed * dt;
+  // dust kicked up behind the car at high speed (visual only)
+  if (!REDUCED_MOTION && spd > 34 && G.visRng() < 0.35) {
+    G.particles.push({ x: G.player.x + (G.visRng() < 0.5 ? -16 : 16), y: G.player.y + 48,
+      vx: (G.visRng() - 0.5) * 30, vy: 60 + G.visRng() * 60,
+      life: 0.4, max: 0.4, color: "#e8c47a", r: 4 + G.visRng() * 3 });
+  }
+  // level up every 500 m: speed bonus (built into the curve) + points
+  var newLevel = levelForDistance(G.distance);
+  if (newLevel > G.level) {
+    G.level = newLevel;
+    G.bonusScore += levelUpBonus(newLevel);
+    G.popups.push({ x: W / 2, y: 260, text: "LEVEL " + newLevel + " — SPEED UP! +" + levelUpBonus(newLevel),
+                    life: 1.6, max: 1.6, big: true });
+    AudioSys.levelUp();
+    announce("Level " + newLevel + "! Speed up, bonus " + levelUpBonus(newLevel) + " points.");
+  }
+  // keyboard steering (keys held in a Set, read inside update())
+  var move = 0;
+  if (keysDown["ArrowLeft"]) move -= 1;
+  if (keysDown["ArrowRight"]) move += 1;
+  if (move !== 0) {
+    G.player.x += move * PLAYER_SPEED * dt;
+    G.player.x = Math.max(ROAD_X0 + CAR_W / 2, Math.min(ROAD_X1 - CAR_W / 2, G.player.x));
+  }
+  // the car leans into the steering (visual only — no effect on collision)
+  var vx = (G.player.x - G.prevX) / Math.max(dt, 0.001);
+  G.prevX = G.player.x;
+  var tiltTarget = Math.max(-0.16, Math.min(0.16, vx * 0.00045));
+  G.player.tilt += (tiltTarget - G.player.tilt) * Math.min(1, dt * 10);
+  // spawn schedule (by distance, so speed never starves or floods spawns)
+  if (G.distance >= G.nextCarAt) {
+    spawnCarWave();
+    G.nextCarAt = G.distance + waveGapBase(G.distance) + G.rng() * 55;
+  }
+  if (G.distance >= G.nextCoinAt) {
+    spawnCoinLine();
+    G.nextCoinAt = G.distance + 120 + G.rng() * 80;
+  }
+  if (G.distance >= G.nextNitroAt) {
+    spawnNitro();
+    G.nextNitroAt = G.distance + 320 + G.rng() * 120;
+  }
+  // roadside decor scrolls with the road and wraps
+  scrollDecor(pxSpeed * dt);
+  // particles + popups
+  for (var pi = G.particles.length - 1; pi >= 0; pi--) {
+    var pt = G.particles[pi];
+    pt.vy += 700 * dt; pt.x += pt.vx * dt; pt.y += pt.vy * dt; pt.life -= dt;
+    if (pt.life <= 0) G.particles.splice(pi, 1);
+  }
+  for (var i = G.popups.length - 1; i >= 0; i--) {
+    G.popups[i].life -= dt;
+    if (G.popups[i].life <= 0) G.popups.splice(i, 1);
+  }
+  // traffic: slower than you, so it drifts down the screen at the
+  // relative speed (your speed minus its speed)
+  for (var ti = G.traffic.length - 1; ti >= 0; ti--) {
+    var car = G.traffic[ti];
+    car.y += pxSpeed * (1 - car.speedFactor) * dt;
+    if (car.y - CAR_H / 2 > H + 40) { G.traffic.splice(ti, 1); continue; }
+    // near-miss: the car just passed you fully, close sideways, no crash
+    if (!car.counted && car.y - CAR_H / 2 > G.player.y + CAR_H / 2) {
+      car.counted = true;
+      if (nearMissEligible(G.player, car)) {
+        G.combo++;
+        if (G.combo > G.bestCombo) G.bestCombo = G.combo;
+        var bonus = nearMissScore(comboMultiplier(G.combo));
+        G.bonusScore += bonus;
+        G.popups.push({ x: G.player.x, y: G.player.y - 70,
+          text: "NEAR MISS +" + bonus + " (x" + comboMultiplier(G.combo) + ")",
+          life: 1.2, max: 1.2 });
+        AudioSys.nearMiss();
+        announce("Near miss! Combo x" + comboMultiplier(G.combo) + ".");
+      }
+    }
+    // crash (skipped while invulnerable)
+    if (G.invulnT <= 0 && checkCrash(G.player, car)) {
+      G.traffic.splice(ti, 1);
+      crash();
+      if (G.state !== "playing") { updateHUD(); return; }
+    }
+  }
+  // pickups ride the road at full road speed
+  for (var qi = G.pickups.length - 1; qi >= 0; qi--) {
+    var pk = G.pickups[qi];
+    pk.y += pxSpeed * dt;
+    if (pk.y - 30 > H + 20) { G.pickups.splice(qi, 1); continue; }
+    if (rectsOverlap(G.player, pk)) {
+      G.pickups.splice(qi, 1);
+      if (pk.kind === "coin") {
+        G.runCoins++;
+        G.bonusScore += COIN_SCORE;
+        spawnBurst(pk.x, pk.y, "#ffd166", 8);
+        AudioSys.coin();
+        announce("Coin! +" + COIN_SCORE + " points.");
+      } else {
+        G.nitroT = NITRO_DURATION;
+        G.bonusScore += NITRO_SCORE;
+        G.popups.push({ x: G.player.x, y: G.player.y - 70, text: "NITRO! +" + NITRO_SCORE,
+                        life: 1.2, max: 1.2 });
+        spawnBurst(G.player.x, G.player.y + 40, "#3a9bdc", 12);
+        AudioSys.nitro();
+        announce("Nitro! Speed burst for " + NITRO_DURATION + " seconds.");
+      }
+    }
+  }
+  updateHUD();
+}
+function updateHUD() {
+  $("hudScore").textContent = String(score());
+  $("hudDist").textContent = Math.floor(G.distance) + " m";
+  $("hudLevel").textContent = String(G.level);
+  var hearts = "";
+  for (var i = 0; i < G.lives; i++) hearts += "\u2764";
+  $("hudLivesVal").textContent = hearts || "\u2014";
+  $("hudComboVal").textContent = "x" + comboMultiplier(G.combo);
+  $("hudCoinsVal").textContent = String(G.runCoins);
+  var bar = $("powerBar");
+  var html = "";
+  if (G.nitroT > 0) html += '<div class="pchip">NITRO ' + G.nitroT.toFixed(1) + 's</div>';
+  if (G.invulnT > 0) html += '<div class="pchip">INVULNERABLE ' + Math.ceil(G.invulnT) + 's</div>';
+  bar.innerHTML = html;
+}
+
+// ---------- input ----------
+// Pointer: the car follows the pointer x (mouse hover or touch drag).
+function canvasPos(e) {
+  var r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * 960 / r.width, y: (e.clientY - r.top) * 600 / r.height };
+}
+function steerTo(x) {
+  G.player.x = Math.max(ROAD_X0 + CAR_W / 2, Math.min(ROAD_X1 - CAR_W / 2, x));
+}
+function onPointerMove(e) {
+  if (G.state !== "playing") return;
+  AudioSys.unlock();
+  var p = canvasPos(e);
+  steerTo(p.x);
+  if (e.preventDefault) e.preventDefault();
+}
+function onPointerDown(e) {
+  if (G.state !== "playing") return;
+  AudioSys.unlock(); // first gesture unlocks/resumes audio
+  var p = canvasPos(e);
+  steerTo(p.x);
+  if (G.tutorial.active) endTutorial();
+  if (e.preventDefault) e.preventDefault();
+}
+canvas.addEventListener("pointermove", onPointerMove);
+canvas.addEventListener("pointerdown", onPointerDown);
+
+// Keyboard: keys held in a Set, read inside update() — handlers never act directly.
+var keysDown = {};
+if (typeof window !== "undefined" && window.addEventListener) {
+  window.addEventListener("keydown", function (e) { keysDown[e.key] = true; });
+  window.addEventListener("keyup", function (e) { delete keysDown[e.key]; });
+}
+function handleKeys() {
+  if (keysDown[" "] || keysDown["Enter"]) {
+    delete keysDown[" "]; delete keysDown["Enter"];
+    if (G.state === "menu") startGame();
+    else if (G.state === "results") startGame();
+    else if (G.state === "paused") resumeGame();
+  }
+  if (keysDown["p"] || keysDown["P"]) {
+    delete keysDown["p"]; delete keysDown["P"];
+    if (G.state === "playing") pauseGame();
+    else if (G.state === "paused") resumeGame();
+  }
+  if ((keysDown["ArrowLeft"] || keysDown["ArrowRight"]) && G.tutorial.active) endTutorial();
+}
+// update() mutates state only; render() draws only.
+function update(dt) {
+  handleKeys();
+  if (G.state === "menu") {
+    // attract mode: the highway idles behind the title screen
+    // (24 m/s cruise — same scroll rate as early gameplay).
+    G.roadOffset += 288 * dt;
+    scrollDecor(288 * dt);
+  }
+  stepGame(dt);
+}
+
+// ---------- buttons ----------
+$("btnPlay").addEventListener("click", function () { AudioSys.click(); startGame(); });
+$("btnRetry").addEventListener("click", function () { AudioSys.click(); startGame(); });
+$("btnMenu").addEventListener("click", function () { AudioSys.click(); showMenu(); });
+$("btnPause").addEventListener("click", function () { AudioSys.click(); pauseGame(); });
+$("btnResume").addEventListener("click", function () { AudioSys.click(); resumeGame(); });
+$("btnRestart").addEventListener("click", function () { AudioSys.click(); if (G.state === "playing" || G.state === "paused") startGame(); });
+$("btnRestartPause").addEventListener("click", function () { AudioSys.click(); startGame(); });
+$("btnSound").addEventListener("click", function () { toggleMute(); });
+$("btnSkipTutorial").addEventListener("click", function () { endTutorial(); });
+if (SAVE.muted) $("btnSound").textContent = "\uD83D\uDD07 Sound: Off";
+
+// ---------- render ----------
+function drawCar(x, y, color, isPlayer, tilt) {
+  ctx.save();
+  ctx.translate(x, y);
+  if (tilt) ctx.rotate(tilt);
+  // wheels
+  ctx.fillStyle = "#1a1a1a";
+  ctx.fillRect(-CAR_W / 2 - 4, -CAR_H / 2 + 12, 8, 20);
+  ctx.fillRect(CAR_W / 2 - 4, -CAR_H / 2 + 12, 8, 20);
+  ctx.fillRect(-CAR_W / 2 - 4, CAR_H / 2 - 32, 8, 20);
+  ctx.fillRect(CAR_W / 2 - 4, CAR_H / 2 - 32, 8, 20);
+  // body
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.roundRect(-CAR_W / 2, -CAR_H / 2, CAR_W, CAR_H, 10);
+  ctx.fill();
+  // hood + trunk shading
+  ctx.fillStyle = "rgba(0,0,0,0.18)";
+  ctx.fillRect(-CAR_W / 2 + 4, -CAR_H / 2 + 6, CAR_W - 8, 12);
+  ctx.fillRect(-CAR_W / 2 + 4, CAR_H / 2 - 18, CAR_W - 8, 12);
+  // windshield + rear window
+  ctx.fillStyle = "#bfe3f0";
+  ctx.beginPath();
+  ctx.roundRect(-CAR_W / 2 + 7, -CAR_H / 2 + 24, CAR_W - 14, 18, 4);
+  ctx.fill();
+  ctx.fillStyle = "#8fb8c9";
+  ctx.beginPath();
+  ctx.roundRect(-CAR_W / 2 + 7, CAR_H / 2 - 40, CAR_W - 14, 14, 4);
+  ctx.fill();
+  // player stripe
+  if (isPlayer) {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(-4, -CAR_H / 2 + 6, 8, CAR_H - 12);
+  }
+  // headlights (front = top, we drive up the screen)
+  ctx.fillStyle = "#fff7c0";
+  ctx.fillRect(-CAR_W / 2 + 6, -CAR_H / 2 + 1, 12, 5);
+  ctx.fillRect(CAR_W / 2 - 18, -CAR_H / 2 + 1, 12, 5);
+  // taillights
+  ctx.fillStyle = "#ff2e2e";
+  ctx.fillRect(-CAR_W / 2 + 6, CAR_H / 2 - 6, 12, 5);
+  ctx.fillRect(CAR_W / 2 - 18, CAR_H / 2 - 6, 12, 5);
+  ctx.restore();
+}
+function drawCoin(pk) {
+  ctx.save();
+  ctx.translate(pk.x, pk.y);
+  // gentle shimmer pulse so coins glitter as they ride down the road
+  var tw = 1 + 0.08 * Math.sin(G.roadOffset * 0.06 + pk.x * 0.05);
+  ctx.scale(tw, tw);
+  ctx.fillStyle = "#b8860b";
+  ctx.beginPath(); ctx.arc(0, 0, 17, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#ffd166";
+  ctx.beginPath(); ctx.arc(0, 0, 14, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#b8860b";
+  ctx.font = "900 18px 'Trebuchet MS', Verdana, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("$", 0, 6);
+  ctx.restore();
+}
+function drawNitro(pk) {
+  ctx.save();
+  ctx.translate(pk.x, pk.y);
+  ctx.fillStyle = "#124a72";
+  ctx.beginPath(); ctx.roundRect(-14, -24, 28, 48, 8); ctx.fill();
+  ctx.fillStyle = "#3a9bdc";
+  ctx.beginPath(); ctx.roundRect(-11, -21, 22, 42, 6); ctx.fill();
+  // lightning bolt
+  ctx.fillStyle = "#ffe14d";
+  ctx.beginPath();
+  ctx.moveTo(3, -18); ctx.lineTo(-7, 2); ctx.lineTo(-1, 2); ctx.lineTo(-4, 18);
+  ctx.lineTo(7, -2); ctx.lineTo(1, -2); ctx.lineTo(6, -18); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+function drawCactus(d) {
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  ctx.scale(d.s, d.s);
+  ctx.fillStyle = "#3e7d32";
+  ctx.beginPath(); ctx.roundRect(-5, -22, 10, 34, 5); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(-16, -10, 8, 16, 4); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(8, -14, 8, 18, 4); ctx.fill();
+  ctx.fillRect(-16, -2, 11, 6);
+  ctx.fillRect(8, -4, 8, 6);
+  ctx.restore();
+}
+function drawRock(d) {
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  ctx.scale(d.s, d.s);
+  ctx.fillStyle = "#a97c50";
+  ctx.beginPath();
+  ctx.moveTo(-14, 8); ctx.lineTo(-8, -8); ctx.lineTo(6, -10); ctx.lineTo(14, 4); ctx.lineTo(8, 10);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,0.25)";
+  ctx.beginPath(); ctx.moveTo(-8, -8); ctx.lineTo(6, -10); ctx.lineTo(2, -2); ctx.lineTo(-6, -1); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+function render() {
+  var shX = 0, shY = 0;
+  if (G.shakeT > 0 && !REDUCED_MOTION) {
+    shX = (G.visRng() - 0.5) * 14;
+    shY = (G.visRng() - 0.5) * 14;
+  }
+  ctx.save();
+  ctx.translate(shX, shY);
+  // sunset sky
+  var sky = ctx.createLinearGradient(0, 0, 0, 600);
+  sky.addColorStop(0, "#ffb347");
+  sky.addColorStop(0.45, "#ff8c3a");
+  sky.addColorStop(1, "#e85d3d");
+  ctx.fillStyle = sky; ctx.fillRect(-20, -20, 1000, 640);
+  // low sun
+  ctx.fillStyle = "#fff3c4";
+  ctx.beginPath(); ctx.arc(760, 110, 52, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "rgba(255,243,196,0.35)";
+  ctx.beginPath(); ctx.arc(760, 110, 72, 0, Math.PI * 2); ctx.fill();
+  // distant mesas
+  ctx.fillStyle = "#c65a2e";
+  ctx.fillRect(-20, 150, 260, 60);
+  ctx.fillRect(60, 120, 140, 40);
+  ctx.fillRect(700, 160, 300, 50);
+  ctx.fillRect(820, 130, 120, 40);
+  ctx.fillStyle = "#a34a24";
+  ctx.fillRect(-20, 205, 1000, 12);
+  // desert sand roadside
+  ctx.fillStyle = "#e8c47a";
+  ctx.fillRect(-20, 210, 1000, 410);
+  ctx.fillStyle = "#d9a05b";
+  for (var i = 0; i < 12; i++) {
+    var px = (i * 173) % 960, py = 240 + (i * 97) % 340;
+    ctx.beginPath(); ctx.ellipse(px, py, 26 + (i % 3) * 10, 8, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  // asphalt
+  ctx.fillStyle = "#33333d";
+  ctx.fillRect(ROAD_X0, 0, ROAD_W, 600);
+  ctx.fillStyle = "#3d3d48";
+  ctx.fillRect(ROAD_X0 + 8, 0, 4, 600);
+  ctx.fillRect(ROAD_X1 - 12, 0, 4, 600);
+  // roadside decor (cacti + rocks)
+  for (var di = 0; di < G.decor.length; di++) {
+    var d = G.decor[di];
+    if (d.kind === "cactus") drawCactus(d); else drawRock(d);
+  }
+  // solid edge lines
+  ctx.fillStyle = "#f5f5f5";
+  ctx.fillRect(ROAD_X0 + 2, 0, 5, 600);
+  ctx.fillRect(ROAD_X1 - 7, 0, 5, 600);
+  // scrolling lane dashes (offset by the road scroll)
+  var dashOff = G.roadOffset % 80;
+  ctx.fillStyle = "#f5f5f5";
+  for (var lane = 1; lane < LANES; lane++) {
+    var lx = ROAD_X0 + lane * LANE_W;
+    for (var y = -80 + dashOff; y < 600; y += 80) {
+      ctx.fillRect(lx - 3, y, 6, 44);
+    }
+  }
+  // roadside mile posts (hand-placed detail, scrolls with the road)
+  var postOff = G.roadOffset % 120;
+  ctx.fillStyle = "#f5f5f5";
+  for (var py = -120 + postOff; py < 600; py += 120) {
+    ctx.fillRect(ROAD_X0 - 16, py, 5, 26);
+    ctx.fillRect(ROAD_X1 + 11, py, 5, 26);
+  }
+  // pickups
+  for (var qi = 0; qi < G.pickups.length; qi++) {
+    var pk = G.pickups[qi];
+    if (pk.kind === "coin") drawCoin(pk); else drawNitro(pk);
+  }
+  // traffic cars
+  for (var ti = 0; ti < G.traffic.length; ti++) {
+    var car = G.traffic[ti];
+    drawCar(car.x, car.y, car.color, false);
+  }
+  // player car — flashes while invulnerable (skip alternate 0.1 s slices)
+  if (!(G.invulnT > 0 && Math.floor(G.invulnT * 10) % 2 === 0)) {
+    drawCar(G.player.x, G.player.y, "#d42b2b", true, G.player.tilt);
+    // nitro flames behind the car
+    if (G.nitroT > 0) {
+      ctx.fillStyle = "#ff9d2e";
+      ctx.beginPath();
+      ctx.moveTo(G.player.x - 12, G.player.y + CAR_H / 2);
+      ctx.lineTo(G.player.x, G.player.y + CAR_H / 2 + 26 + G.visRng() * 10);
+      ctx.lineTo(G.player.x + 12, G.player.y + CAR_H / 2);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = "#ffe14d";
+      ctx.beginPath();
+      ctx.moveTo(G.player.x - 7, G.player.y + CAR_H / 2);
+      ctx.lineTo(G.player.x, G.player.y + CAR_H / 2 + 16 + G.visRng() * 8);
+      ctx.lineTo(G.player.x + 7, G.player.y + CAR_H / 2);
+      ctx.closePath(); ctx.fill();
+    }
+  }
+
+  // particles (juice; skipped entirely under prefers-reduced-motion)
+  for (var q = 0; q < G.particles.length; q++) {
+    var pt = G.particles[q];
+    ctx.globalAlpha = Math.max(0, pt.life / pt.max);
+    ctx.fillStyle = pt.color;
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // popups (level-ups render bigger)
+  ctx.textAlign = "center";
+  for (var k = 0; k < G.popups.length; k++) {
+    var p = G.popups[k];
+    var a = Math.max(0, p.life / p.max);
+    ctx.globalAlpha = a;
+    ctx.font = p.big ? "900 34px 'Trebuchet MS', Verdana, sans-serif" : "900 26px 'Trebuchet MS', Verdana, sans-serif";
+    ctx.fillStyle = "#ffd166";
+    ctx.fillText(p.text, p.x, p.y - (p.max - p.life) * 40);
+  }
+  ctx.globalAlpha = 1;
+
+  // red crash flash (skipped under prefers-reduced-motion)
+  if (G.flashT > 0 && !REDUCED_MOTION) {
+    ctx.fillStyle = "rgba(255,40,40," + (G.flashT * 0.45).toFixed(3) + ")";
+    ctx.fillRect(-20, -20, 1000, 640);
+  }
+
+  // speed lines at high speed (juice, gated)
+  if (!REDUCED_MOTION && G.state === "playing" && speedMps(G.distance) > 34) {
+    ctx.strokeStyle = "rgba(255,255,255,0.25)";
+    ctx.lineWidth = 2;
+    for (var s = 0; s < 6; s++) {
+      var sx = ROAD_X0 + 20 + ((s * 97 + Math.floor(G.roadOffset)) % (ROAD_W - 40));
+      var sy = (s * 131 + Math.floor(G.roadOffset * 2)) % 600;
+      ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx, sy + 34); ctx.stroke();
+    }
+  }
+
+  // menu-state backdrop hint: the road idles behind the menu overlay
+  if (G.state === "menu") {
+    ctx.font = "900 20px 'Trebuchet MS', Verdana, sans-serif";
+    ctx.fillStyle = "rgba(255,255,255,0.5)";
+    ctx.textAlign = "center";
+  }
+  ctx.restore();
+}
+
+// ---------- main loop: fixed-timestep accumulator (60 Hz) ----------
+// Frame delta is clamped to <=250 ms BEFORE accumulating, so a tab-switch
+// or hitch can never spiral into a catch-up storm.
+var ACC = 0, LAST = 0;
+function loop(ts) {
+  requestAnimationFrame(loop);
+  if (!LAST) LAST = ts || 0;
+  var frameDt = ((ts || 0) - LAST) / 1000;
+  LAST = ts || 0;
+  if (!(frameDt > 0)) frameDt = 0.016;
+  if (frameDt > 0.25) frameDt = 0.25;
+  ACC += frameDt;
+  var steps = 0;
+  while (ACC >= 1 / 60 && steps < 5) { update(1 / 60); ACC -= 1 / 60; steps++; }
+  if (steps === 5) ACC = 0; // drop backlog rather than spiral
+  render();
+}
+// Auto-pause on tab hide; on return, reset the time baseline and zero the
+// accumulator so no stale delta leaks into the next frame.
+if (document.addEventListener) document.addEventListener("visibilitychange", function () {
+  if (document.hidden) { if (G.state === "playing") pauseGame(); }
+  else { LAST = 0; ACC = 0; }
+});
+
+updateMenu();
+updateHUD();
+render();
+requestAnimationFrame(loop);
+try { window.__gameReady = true; } catch (e) {}
+
+window.__DriftRaceTest = {
+  G: G, SAVE: SAVE, startGame: startGame, crash: crash,
+  stepGame: stepGame, pauseGame: pauseGame,
+  resumeGame: resumeGame, showMenu: showMenu, toggleMute: toggleMute,
+  endTutorial: endTutorial, gameOver: gameOver,
+  spawnCarWave: spawnCarWave, spawnCoinLine: spawnCoinLine, spawnNitro: spawnNitro,
+  score: score, claimDaily: claimDaily, todayString: todayString,
+  yesterdayString: yesterdayString,
+  levelForDistance: levelForDistance, speedMps: speedMps,
+  levelUpBonus: levelUpBonus, comboMultiplier: comboMultiplier,
+  nearMissScore: nearMissScore, rankForDistance: rankForDistance,
+  rankNextAt: rankNextAt, laneCenter: laneCenter,
+  generateSpawnPattern: generateSpawnPattern, spawnWave: spawnWave,
+  coinLine: coinLine, nitroSpawn: nitroSpawn,
+  rectsOverlap: rectsOverlap, checkCrash: checkCrash,
+  nearMissEligible: nearMissEligible, applyCrash: applyCrash,
+  loadSave: loadSave, saveSave: saveSave, defaultSave: defaultSave,
+  mulberry32: mulberry32, waveGapBase: waveGapBase, scrollDecor: scrollDecor, render: render, AudioSys: AudioSys,
+  update: update, setState: setState, keysDown: keysDown,
+  spawnBurst: spawnBurst, announce: announce, resizeCanvas: resizeCanvas,
+  TRAFFIC_COLORS: TRAFFIC_COLORS, RANKS: RANKS, W: W, H: H,
+  ROAD_X0: ROAD_X0, ROAD_X1: ROAD_X1, LANES: LANES, LANE_W: LANE_W,
+  CAR_W: CAR_W, CAR_H: CAR_H, PLAYER_Y: PLAYER_Y, PLAYER_SPEED: PLAYER_SPEED,
+  START_LIVES: START_LIVES, INVULN_TIME: INVULN_TIME, NITRO_DURATION: NITRO_DURATION,
+  SAVE_KEY: SAVE_KEY, LEVEL_METRES: LEVEL_METRES
+};
+</script>
+</body>
+</html>
