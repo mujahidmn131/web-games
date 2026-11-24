@@ -1,0 +1,1370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Jump Quest — Run, Jump, Stomp, Reach the Flag!</title>
+<!--
+  Jump Quest — original HTML5 2D platformer.
+  100% code-drawn (Canvas 2D + CSS), no images, no audio files, no
+  external resources at all. Single file, plain vanilla JS, no
+  frameworks, no SDK, no ads, no external URLs. Saves in localStorage
+  only, save key "jumpquest_save_v1".
+
+  How to play: run with Arrow keys / A-D (or the on-screen buttons on
+  touch), jump with Space / Up / W — hold for a higher jump, release
+  early for a shorter hop. Coyote time (~0.12 s) and jump buffering
+  (~0.12 s) keep the controls fair. Land on platforms (some move,
+  some are one-way — jump up through them), collect gold coins
+  (+25 pts), stomp walking enemies (+50 pts), dodge spikes (a hit
+  costs a life), and reach the flag to complete each level. Faster
+  completion pays a time bonus. 12 levels with rising difficulty,
+  seeded layouts (deterministic per level). 3 lives per level attempt;
+  losing all 3 is game over. Levels unlock one by one; progress,
+  best score and best level are saved. Ranks run from Rookie to
+  Legend based on your best score. Come back daily for a bonus that
+  grows with your streak. Sounds are tiny WebAudio oscillator/noise
+  blips with a mute toggle. No audio files.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; background: #3f8fd2; overflow: hidden; }
+  body { font-family: "Trebuchet MS", "Segoe UI", Verdana, sans-serif; color: #2d4a22;
+    display: flex; align-items: center; justify-content: center; }
+  #wrap { width: 100%; max-width: 960px; }
+  #game { position: relative; width: 100%; aspect-ratio: 960 / 600; max-height: 100vh;
+    margin: 0 auto; overflow: hidden; border-radius: 14px;
+    box-shadow: 0 18px 60px rgba(0,0,0,.45), 0 0 0 3px rgba(255,255,255,.5), 0 0 44px rgba(255,214,64,.35);
+    background: linear-gradient(180deg, #7ec8f7 0%, #a8dcff 55%, #d8f3c0 100%); }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  canvas:focus-visible { outline: 3px solid #ffd64a; outline-offset: -3px; }
+  #liveRegion { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .hidden { display: none !important; }
+
+  /* HUD */
+  #hud { position: absolute; top: 0; left: 0; right: 0; display: flex; gap: 8px;
+    padding: 10px 12px 0; pointer-events: none; z-index: 5; }
+  .stat { flex: 1; background: rgba(255,255,255,.88); border: 1px solid rgba(46,125,50,.45);
+    border-radius: 12px; padding: 5px 6px 6px; text-align: center; min-width: 0;
+    box-shadow: 0 4px 12px rgba(0,0,0,.2); }
+  .stat .lbl { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #2e7d32; font-weight: 700; }
+  .stat .val { font-size: 22px; font-weight: 900; line-height: 1.1; white-space: nowrap; color: #2d4a22; }
+  #hudLives .val { color: #e53935; letter-spacing: 2px; }
+  #hudCoins .val { color: #b8860b; }
+
+  /* side buttons */
+  #sideBtns { position: absolute; right: 10px; top: 74px; display: flex; flex-direction: column; gap: 8px; z-index: 6; }
+  .btn { font-family: inherit; font-weight: 800; color: #fff; border: none; cursor: pointer;
+    background: linear-gradient(180deg, #43a047, #2e7d32); border-radius: 12px;
+    padding: 12px 22px; font-size: 18px; letter-spacing: .02em;
+    box-shadow: 0 5px 0 #1b5e20, 0 8px 16px rgba(0,0,0,.3); text-shadow: 0 1px 2px rgba(0,0,0,.3); }
+  .btn:active { transform: translateY(4px); box-shadow: 0 1px 0 #1b5e20, 0 4px 8px rgba(0,0,0,.3); }
+  .btn.blue { background: linear-gradient(180deg, #42a5f5, #1e88e5); box-shadow: 0 5px 0 #0d47a1, 0 8px 16px rgba(0,0,0,.3); }
+  .btn.blue:active { box-shadow: 0 1px 0 #0d47a1, 0 4px 8px rgba(0,0,0,.3); }
+  .btn.yellow { background: linear-gradient(180deg, #ffd54f, #ffb300); color: #5d4037; box-shadow: 0 5px 0 #ff8f00, 0 8px 16px rgba(0,0,0,.3); text-shadow: none; }
+  .btn.yellow:active { box-shadow: 0 1px 0 #ff8f00, 0 4px 8px rgba(0,0,0,.3); }
+  .btn.ghost { background: rgba(255,255,255,.92); color: #2d4a22; box-shadow: 0 4px 0 rgba(0,0,0,.25); border: 1px solid rgba(46,125,50,.45); text-shadow: none; }
+  .btn.small { padding: 8px 12px; font-size: 14px; border-radius: 10px; }
+  .btn:disabled { opacity: .45; cursor: default; transform: none; }
+
+  /* touch controls (shown only on coarse pointers) */
+  #touchBtns { position: absolute; left: 0; right: 0; bottom: 10px; z-index: 6;
+    display: none; justify-content: space-between; padding: 0 12px; pointer-events: none; }
+  #touchBtns .tgroup { display: flex; gap: 10px; pointer-events: auto; }
+  .tbtn { width: 64px; height: 64px; border-radius: 50%; border: 2px solid rgba(255,255,255,.8);
+    background: rgba(46,125,50,.75); color: #fff; font-size: 26px; font-weight: 900;
+    font-family: inherit; box-shadow: 0 4px 12px rgba(0,0,0,.3); }
+  .tbtn:active { background: rgba(27,94,32,.9); transform: scale(.94); }
+  .tbtn.jump { background: rgba(255,179,0,.85); color: #5d4037; width: 76px; height: 76px; font-size: 18px; }
+  @media (pointer: coarse) { #touchBtns { display: flex; } }
+
+  /* tutorial bar */
+  #tutorialBar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+    width: min(92%, 640px); background: rgba(255,248,225,.97); border: 2px solid #ffb300;
+    border-radius: 14px; padding: 12px 14px; z-index: 7; text-align: center;
+    box-shadow: 0 10px 30px rgba(0,0,0,.35); }
+  #tutorialBar .step { font-size: 12px; color: #e65100; font-weight: 800; letter-spacing: .15em; }
+  #tutorialText { font-size: 18px; font-weight: 700; margin: 4px 0 10px; line-height: 1.35; color: #2d4a22; }
+
+  /* overlays */
+  .overlay { position: absolute; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+    background: rgba(31,80,140,.45); backdrop-filter: blur(2px); padding: 16px; }
+  .card { width: min(94%, 560px); max-height: 96%; overflow-y: auto; text-align: center;
+    background: linear-gradient(180deg, #fffdf5, #eef7dc); border: 2px solid rgba(46,125,50,.5);
+    border-radius: 20px; padding: 14px 20px 14px; box-shadow: 0 20px 60px rgba(0,0,0,.45); }
+  .card h1 { font-size: 36px; font-weight: 900; letter-spacing: .02em; line-height: 1.05;
+    background: linear-gradient(180deg, #43a047, #1b5e20); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .card h2 { font-size: 32px; font-weight: 900; margin-bottom: 6px; color: #1b5e20; }
+  .card .sub { color: #4a6b3a; font-size: 15px; margin: 6px 0 10px; line-height: 1.45; }
+  .heroEmoji { font-size: 38px; line-height: 1; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 8px 0; }
+  .chip { background: rgba(255,255,255,.75); border: 1px solid rgba(46,125,50,.3); border-radius: 12px; padding: 6px 10px; min-width: 92px; }
+  .chip .lbl { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #2e7d32; font-weight: 700; }
+  .chip .val { font-size: 18px; font-weight: 900; color: #2d4a22; }
+  .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 10px; }
+  #menuBest { display: none; }
+  #menuRankWrap { margin: 2px auto 0; max-width: 420px; }
+  #menuRankBarOuter { height: 10px; background: rgba(0,0,0,.12); border-radius: 999px; overflow: hidden; }
+  #menuRankBar { height: 100%; width: 0%; background: linear-gradient(90deg, #ffd54f, #43a047); border-radius: 999px; }
+  #menuRankNext { font-size: 13px; color: #4a6b3a; margin-top: 4px; text-align: center; }
+  .bigScore { font-size: 56px; font-weight: 900; line-height: 1; color: #e65100;
+    text-shadow: 0 4px 0 rgba(0,0,0,.12); margin: 6px 0; }
+  #newBestBadge { display: inline-block; background: linear-gradient(180deg, #ffe082, #ffb300); color: #5d4037;
+    font-weight: 900; border-radius: 999px; padding: 6px 16px; font-size: 16px; margin: 6px 0;
+    box-shadow: 0 4px 14px rgba(255,179,0,.5); animation: pop .5s ease; }
+  @keyframes pop { 0% { transform: scale(.5); } 60% { transform: scale(1.15); } 100% { transform: scale(1); } }
+  .statsGrid { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 12px 0 4px; }
+  .note { font-size: 13px; color: #6b8a5a; margin-top: 8px; line-height: 1.5; }
+  .powerList { text-align: left; font-size: 13px; line-height: 1.5; color: #4a6b3a; margin: 6px auto 0; max-width: 420px; }
+  .powerList b { color: #2e7d32; }
+  #levelGrid { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 8px 0 2px; }
+  .lvlBtn { width: 52px; padding: 8px 0; font-size: 18px; }
+  @media (max-width: 640px) {
+    .card h1 { font-size: 32px; } .card h2 { font-size: 26px; }
+    .stat .val { font-size: 17px; } .stat .lbl { font-size: 9px; }
+    .btn { font-size: 16px; padding: 11px 18px; }
+    #tutorialText { font-size: 15px; }
+    .lvlBtn { width: 44px; }
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="game">
+    <canvas id="boardCanvas" width="960" height="600" tabindex="0" aria-label="Jump Quest game. Run with arrow keys or A D, jump with Space, Up or W. Collect coins, stomp enemies, dodge spikes, reach the flag."></canvas>
+    <div id="liveRegion" aria-live="polite"></div>
+
+    <div id="hud">
+      <div class="stat"><div class="lbl">Score</div><div class="val" id="hudScore">0</div></div>
+      <div class="stat"><div class="lbl">Level</div><div class="val" id="hudLevel">1 / 12</div></div>
+      <div class="stat" id="hudLives"><div class="lbl">Lives</div><div class="val" id="hudLivesVal">&#10084;&#10084;&#10084;</div></div>
+      <div class="stat" id="hudCoins"><div class="lbl">Coins</div><div class="val" id="hudCoinsVal">0</div></div>
+      <div class="stat"><div class="lbl">Time</div><div class="val" id="hudTimeVal">0:00</div></div>
+    </div>
+
+    <div id="sideBtns">
+      <button class="btn ghost small" id="btnPause" type="button">&#9208; Pause</button>
+      <button class="btn ghost small" id="btnSound" type="button">&#128266; Sound: On</button>
+      <button class="btn ghost small" id="btnRestart" type="button">&#8635; Restart</button>
+    </div>
+
+    <div id="touchBtns">
+      <div class="tgroup">
+        <button class="tbtn" id="btnLeft" type="button" aria-label="Move left">&#9664;</button>
+        <button class="tbtn" id="btnRight" type="button" aria-label="Move right">&#9654;</button>
+      </div>
+      <div class="tgroup">
+        <button class="tbtn jump" id="btnJump" type="button" aria-label="Jump">JUMP</button>
+      </div>
+    </div>
+
+    <div id="tutorialBar" class="hidden">
+      <div class="step">HOW TO PLAY</div>
+      <div id="tutorialText"></div>
+      <button class="btn blue small" id="btnSkipTutorial" type="button" style="margin-top:8px;">Got it &#10005;</button>
+    </div>
+
+    <div class="overlay" id="menuOverlay">
+      <div class="card">
+        <div class="heroEmoji">&#127939;</div>
+        <h1>JUMP QUEST</h1>
+        <p class="sub">Run, jump and stomp your way across 12 sunny levels!
+        Grab gold coins, bounce on enemies, dodge the spikes — and reach
+        the flag. Faster finishes pay a time bonus!</p>
+        <div class="chips">
+          <div class="chip"><div class="lbl">Best Score</div><div class="val" id="menuBestScore">0</div></div>
+          <div class="chip"><div class="lbl">Best Level</div><div class="val" id="menuBestLevel">0</div></div>
+          <div class="chip"><div class="lbl">Rank</div><div class="val" id="menuRank">Rookie</div></div>
+          <div class="chip"><div class="lbl">Coins</div><div class="val" id="menuCoins">0</div></div>
+        </div>
+        <div id="menuRankWrap">
+          <div id="menuRankBarOuter"><div id="menuRankBar"></div></div>
+          <p id="menuRankNext"></p>
+        </div>
+        <p id="menuDaily" class="note"></p>
+        <div id="levelGrid">
+          <button class="btn lvlBtn" id="lvlBtn1" type="button">1</button><button class="btn lvlBtn" id="lvlBtn2" type="button">2</button><button class="btn lvlBtn" id="lvlBtn3" type="button">3</button><button class="btn lvlBtn" id="lvlBtn4" type="button">4</button><button class="btn lvlBtn" id="lvlBtn5" type="button">5</button><button class="btn lvlBtn" id="lvlBtn6" type="button">6</button><button class="btn lvlBtn" id="lvlBtn7" type="button">7</button><button class="btn lvlBtn" id="lvlBtn8" type="button">8</button><button class="btn lvlBtn" id="lvlBtn9" type="button">9</button><button class="btn lvlBtn" id="lvlBtn10" type="button">10</button><button class="btn lvlBtn" id="lvlBtn11" type="button">11</button><button class="btn lvlBtn" id="lvlBtn12" type="button">12</button>
+        </div>
+        <div class="row"><button class="btn yellow" id="btnPlay" type="button">&#9654; Play</button></div>
+        <p id="menuBest">Best score: 0</p>
+        <div class="powerList">
+          <b>Controls:</b> &#8592; &#8594; / A D to run &nbsp;•&nbsp; Space / &#8593; / W to jump (hold = higher)<br>
+          <b>Coins:</b> &#11088; +25 pts &nbsp;•&nbsp; <b>Stomp an enemy:</b> +50 pts &nbsp;•&nbsp; <b>Spikes:</b> cost a life<br>
+          <b>Flag:</b> finish the level — beat the par time for a bonus up to +500 pts.
+        </div>
+        <p class="note">Tip: pale-green platforms can be jumped up through.</p>
+      </div>
+    </div>
+
+    <div class="overlay hidden" id="pauseOverlay">
+      <div class="card">
+        <h2>Paused</h2>
+        <p class="sub">Take a breather — the quest is frozen.</p>
+        <div class="chips">
+          <div class="chip"><div class="lbl">Score</div><div class="val" id="pauseScore">0</div></div>
+          <div class="chip"><div class="lbl">Level</div><div class="val" id="pauseLevel">1</div></div>
+          <div class="chip"><div class="lbl">Lives</div><div class="val" id="pauseLives">3</div></div>
+        </div>
+        <div class="row">
+          <button class="btn" id="btnResume" type="button">&#9654; Resume</button>
+          <button class="btn blue" id="btnRestartPause" type="button">&#8635; Restart</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="overlay hidden" id="resultsOverlay">
+      <div class="card">
+        <h2 id="resultsTitle">Game Over</h2>
+        <div><span id="newBestBadge" class="hidden">&#9733; NEW BEST! &#9733;</span></div>
+        <div class="bigScore" id="finalScore">0</div>
+        <p class="sub" id="resultsSub"></p>
+        <div class="statsGrid">
+          <div class="chip"><div class="lbl">Level</div><div class="val" id="finalLevel">1</div></div>
+          <div class="chip"><div class="lbl">Coins</div><div class="val" id="finalCoins">0</div></div>
+          <div class="chip"><div class="lbl">Stomps</div><div class="val" id="finalStomps">0</div></div>
+          <div class="chip"><div class="lbl">Time</div><div class="val" id="finalTime">0:00</div></div>
+          <div class="chip"><div class="lbl">Time Bonus</div><div class="val" id="finalTimeBonus">+0</div></div>
+          <div class="chip"><div class="lbl">Rank</div><div class="val" id="finalRank">Rookie</div></div>
+          <div class="chip"><div class="lbl">Best Score</div><div class="val" id="finalBest">0</div></div>
+        </div>
+        <div class="row">
+          <button class="btn" id="btnRetry" type="button">&#8635; Retry Level</button>
+          <button class="btn green hidden" id="btnNextLevel" type="button">Next Level &#9654;</button>
+          <button class="btn blue" id="btnMenu" type="button">Menu</button>
+        </div>
+        <p class="note">Press Enter to retry instantly.</p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+"use strict";
+// __PURE_LOGIC_START__
+var SAVE_KEY = "jumpquest_save_v1";
+var W = 960, H = 600;
+var GRAVITY = 1800, MOVE_SPEED = 260, JUMP_VEL = 640, JUMP_CUT = 0.45;
+var COYOTE_TIME = 0.12, JUMP_BUFFER = 0.12;
+var START_LIVES = 3, INVULN_TIME = 2;
+var COIN_SCORE = 25, STOMP_SCORE = 50;
+var MAX_LEVELS = 12;
+var PLAYER_W = 34, PLAYER_H = 48;
+var RANKS = [[0, "Rookie"], [500, "Amateur"], [1500, "Pro"],
+             [3000, "Expert"], [5000, "Master"], [8000, "Legend"]];
+
+function defaultSave() {
+  // v: save-schema version (migration ladder in loadSave). seed: PRNG seed,
+  // generated once from the clock — all level layouts derive from it.
+  // best: best score. bestLevel: highest level completed. unlocked:
+  // highest level the player may start (1..12). coins: lifetime coins.
+  // lastDaily: "YYYY-MM-DD" of the last claimed daily bonus ("" = never).
+  return { v: 1, seed: ((Date.now() % 2147483646) + 1), best: 0, bestLevel: 0,
+           unlocked: 1, coins: 0, muted: false, tutorialSeen: false,
+           lastDaily: "", dailyStreak: 0, runs: 0 };
+}
+// Seeded PRNG (mulberry32) — ALL gameplay randomness comes from this, never Math.random().
+// (The single exception is the WebAudio white-noise buffer for the hurt
+// sound, which is audio noise, not gameplay randomness.)
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+// store: optional storage object ({getItem,setItem}); defaults to localStorage.
+// Tests inject a Map-backed fake; every access is try/catch-guarded.
+function loadSave(store) {
+  var s = defaultSave();
+  try {
+    var st = store || (typeof localStorage !== "undefined" ? localStorage : null);
+    if (!st) return s;
+    var raw = st.getItem(SAVE_KEY);
+    if (!raw) return s;
+    var p = JSON.parse(raw);
+    if (!p || typeof p !== "object") return s;
+    // migration ladder: v0 (no version field) -> v1: keep the fields, stamp v:1.
+    if (typeof p.v !== "number") p.v = 1;
+    if (typeof p.seed === "number" && p.seed > 0) s.seed = Math.floor(p.seed);
+    if (typeof p.best === "number") s.best = Math.max(0, Math.floor(p.best));
+    if (typeof p.bestLevel === "number") s.bestLevel = Math.max(0, Math.min(MAX_LEVELS, Math.floor(p.bestLevel)));
+    if (typeof p.unlocked === "number") s.unlocked = Math.max(1, Math.min(MAX_LEVELS, Math.floor(p.unlocked)));
+    if (typeof p.coins === "number") s.coins = Math.max(0, Math.floor(p.coins));
+    if (typeof p.muted === "boolean") s.muted = p.muted;
+    if (typeof p.tutorialSeen === "boolean") s.tutorialSeen = p.tutorialSeen;
+    if (typeof p.lastDaily === "string") s.lastDaily = p.lastDaily;
+    if (typeof p.dailyStreak === "number") s.dailyStreak = Math.max(0, Math.floor(p.dailyStreak));
+    if (typeof p.runs === "number") s.runs = Math.max(0, Math.floor(p.runs));
+  } catch (e) { /* corrupted save -> defaults */ }
+  return s;
+}
+function saveSave(s, store) {
+  try {
+    var st = store || (typeof localStorage !== "undefined" ? localStorage : null);
+    if (!st) return false;
+    st.setItem(SAVE_KEY, JSON.stringify(s));
+    return true;
+  } catch (e) { return false; }
+}
+
+// --- ranks (by best score) ---
+function rankForScore(s) {
+  var name = RANKS[0][1];
+  for (var i = 0; i < RANKS.length; i++) if (s >= RANKS[i][0]) name = RANKS[i][1];
+  return name;
+}
+function rankNextAt(s) {
+  for (var i = 0; i < RANKS.length; i++) if (s < RANKS[i][0]) return RANKS[i][0];
+  return null; // already Legend
+}
+
+// --- daily bonus (pure: takes the save + a "YYYY-MM-DD" date string) ---
+function todayString() {
+  return new Date().toISOString().slice(0, 10);
+}
+function yesterdayString(today) {
+  var d = new Date(today + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+// Claims the daily bonus into the save. Streak grows only on consecutive
+// days; a missed day resets it to 1. Reward = 50 + 50*streak, capped at 500.
+function claimDaily(save, today) {
+  if (!save || typeof save !== "object") return { claimed: false, reward: 0, streak: 0 };
+  if (save.lastDaily === today) return { claimed: false, reward: 0, streak: save.dailyStreak || 0 };
+  var streak = (save.lastDaily === yesterdayString(today)) ? (save.dailyStreak || 0) + 1 : 1;
+  var reward = Math.min(50 + 50 * streak, 500);
+  save.dailyStreak = streak;
+  save.lastDaily = today;
+  save.coins = Math.max(0, save.coins || 0) + reward;
+  return { claimed: true, reward: reward, streak: streak };
+}
+
+// --- scoring / par time ---
+// Par time grows 5 s per level (50 s on level 1, 105 s on level 12).
+// Every second under par pays 10 pts, capped at +500.
+function parTimeForLevel(level) { return 45 + Math.max(1, level) * 5; }
+function timeBonusForLevel(level, timeSec) {
+  return Math.min(500, Math.max(0, Math.floor((parTimeForLevel(level) - timeSec) * 10)));
+}
+function levelScore(coins, stomps, timeBonus) {
+  return coins * COIN_SCORE + stomps * STOMP_SCORE + (timeBonus || 0);
+}
+
+// --- seeded level layouts (deterministic per seed + level) ---
+// Platforms are laid out left-to-right in columns: consecutive tops
+// differ by at most 80 px (jump height is ~107 px) and horizontal gaps
+// stay under ~105 px (jump range is ~185 px), so every level is
+// traversable by jumping alone. The flag sits on the ground at the
+// far right; the spawn is on the ground at the far left.
+function generateLevel(seed, level) {
+  var rng = mulberry32((seed + level * 7919) >>> 0);
+  var plats = [{ x: 0, y: 556, w: 960, h: 44, type: "static", oneWay: false }];
+  var nPlat = 4 + Math.min(level, 8);
+  var prevY = 470;
+  for (var i = 0; i < nPlat; i++) {
+    var bx = 90 + i * (740 / nPlat) + rng() * 30;
+    var y = prevY + (rng() - 0.5) * 160;
+    if (y < 170) y = 170;
+    if (y > 480) y = 480;
+    // the FIRST platform must be reachable from the ground in one jump
+    // (rise <= jump height ~107 px, so y >= 449)
+    if (i === 0 && y < 449) y = 449;
+    var w = 80 + rng() * Math.min(70, 740 / nPlat);
+    plats.push({ x: Math.floor(bx), y: Math.floor(y), w: Math.floor(w), h: 20,
+                 type: "static", oneWay: false });
+    prevY = y;
+  }
+  // moving platforms (from level 3): 1 + 1 per 2 levels, capped at 4.
+  // Vertical movers only from level 6. One-way platforms from level 4.
+  var nMove = level >= 3 ? Math.min(1 + Math.floor((level - 3) / 2), 4) : 0;
+  var idx = [];
+  for (var k = 1; k < plats.length; k++) idx.push(k);
+  for (var s = idx.length - 1; s > 0; s--) {
+    var j = Math.floor(rng() * (s + 1));
+    var t = idx[s]; idx[s] = idx[j]; idx[j] = t;
+  }
+  for (var m = 0; m < nMove && m < idx.length; m++) {
+    var pl = plats[idx[m]];
+    pl.type = "moving";
+    pl.axis = (level >= 6 && rng() < 0.5) ? "y" : "x";
+    pl.range = 50 + rng() * 60;
+    pl.speed = 40 + level * 3 + rng() * 20;
+    pl.phase = rng() * 6.283;
+    pl.baseX = pl.x; pl.baseY = pl.y; pl.t = 0;
+  }
+  if (level >= 4) {
+    for (var q = 1; q < plats.length; q++) {
+      if (plats[q].type === "static" && rng() < 0.4) plats[q].oneWay = true;
+    }
+  }
+  // coins: 6 + level, capped at 16 — arcs above platforms, some on the ground.
+  var coins = [];
+  var nCoin = Math.min(6 + level, 16);
+  for (var c = 0; c < nCoin; c++) {
+    if (rng() < 0.3) {
+      coins.push({ x: Math.floor(60 + rng() * 840), y: 520, w: 24, h: 24, taken: false });
+    } else {
+      var pi = 1 + Math.floor(rng() * (plats.length - 1));
+      var pp = plats[pi];
+      coins.push({ x: Math.floor(pp.x + 10 + rng() * Math.max(1, pp.w - 20)),
+                   y: Math.floor(pp.y - 36), w: 24, h: 24, taken: false });
+    }
+  }
+  // spikes (from level 2): on the ground, clear of the spawn and the flag.
+  var spikes = [];
+  var nSpike = level >= 2 ? Math.min(level - 1, 10) : 0;
+  for (var sp = 0; sp < nSpike; sp++) {
+    spikes.push({ x: Math.floor(200 + rng() * 620), y: 532, w: 36, h: 24 });
+  }
+  // walking enemies (from level 2): patrol the ground.
+  var enemies = [];
+  var nEnemy = level >= 2 ? Math.min(1 + Math.floor(level / 2), 7) : 0;
+  for (var en = 0; en < nEnemy; en++) {
+    var ex = Math.floor(200 + rng() * 600);
+    enemies.push({ x: ex, baseX: ex, y: 528, w: 32, h: 28,
+                   speed: 30 + level * 4 + rng() * 15,
+                   range: 60 + rng() * 80, dir: rng() < 0.5 ? -1 : 1 });
+  }
+  return { level: level, spawn: { x: 50, y: 500 },
+           flag: { x: 890, y: 496, w: 30, h: 60 },
+           platforms: plats, coins: coins, spikes: spikes, enemies: enemies,
+           par: parTimeForLevel(level) };
+}
+
+// --- player physics (pure; player rect is top-left {x, y, w, h}) ---
+function makePlayer(x, y) {
+  return { x: x, y: y, w: PLAYER_W, h: PLAYER_H, vx: 0, vy: 0,
+           onGround: false, coyoteT: 0, bufferT: 0, facing: 1,
+           squash: 0, standingPlat: null };
+}
+// One physics step: horizontal velocity from input, gravity, coyote time
+// (jump still works ~0.12 s after leaving a ledge) and jump buffering
+// (a jump pressed ~0.12 s before landing fires on landing).
+function physicsStep(p, input, dt) {
+  var jumped = false;
+  var dir = 0;
+  if (input.left) dir -= 1;
+  if (input.right) dir += 1;
+  p.vx = dir * MOVE_SPEED;
+  if (dir !== 0) p.facing = dir;
+  p.vy += GRAVITY * dt;
+  if (p.vy > 900) p.vy = 900;
+  if (p.onGround) p.coyoteT = COYOTE_TIME;
+  else { p.coyoteT -= dt; if (p.coyoteT < 0) p.coyoteT = 0; }
+  if (input.jumpPressed) p.bufferT = JUMP_BUFFER;
+  else { p.bufferT -= dt; if (p.bufferT < 0) p.bufferT = 0; }
+  if (p.bufferT > 0 && p.coyoteT > 0) {
+    p.vy = -JUMP_VEL; p.onGround = false; p.coyoteT = 0; p.bufferT = 0; jumped = true;
+  }
+  return { jumped: jumped };
+}
+// Releasing jump early cuts the upward velocity — variable jump height.
+function jumpCut(p) { if (p.vy < 0) p.vy *= JUMP_CUT; }
+// Integrate + resolve vertical platform collisions. Landing needs the
+// previous bottom at/above the platform top (so a fast fall cannot tunnel
+// through a thin platform); head bumps only apply to solid platforms —
+// one-way platforms are jumped up through from below.
+function moveAndCollide(p, plats, dt) {
+  var prevBottom = p.y + p.h;
+  var prevTop = p.y;
+  p.x += p.vx * dt;
+  if (p.x < 0) p.x = 0;
+  if (p.x > W - p.w) p.x = W - p.w;
+  p.y += p.vy * dt;
+  var landed = false, hitHead = false;
+  p.onGround = false;
+  for (var i = 0; i < plats.length; i++) {
+    var pl = plats[i];
+    if (p.x + p.w <= pl.x || p.x >= pl.x + pl.w) continue;
+    if (p.vy >= 0) {
+      if (prevBottom <= pl.y + 1 && p.y + p.h >= pl.y && p.y + p.h <= pl.y + pl.h + 24) {
+        p.y = pl.y - p.h; p.vy = 0; p.onGround = true; p.standingPlat = pl; landed = true;
+      }
+    } else if (!pl.oneWay) {
+      if (prevTop >= pl.y + pl.h - 1 && p.y <= pl.y + pl.h && p.y + p.h > pl.y) {
+        p.y = pl.y + pl.h; p.vy = 0; hitHead = true;
+      }
+    }
+  }
+  if (!p.onGround) p.standingPlat = null;
+  return { landed: landed, hitHead: hitHead };
+}
+// Advance moving platforms along a sine (peak speed = pl.speed) and
+// return each platform's displacement this step, so a standing player
+// can be carried along.
+function updatePlatforms(plats, dt) {
+  var deltas = [];
+  for (var i = 0; i < plats.length; i++) {
+    var pl = plats[i];
+    var dx = 0, dy = 0;
+    if (pl.type === "moving") {
+      pl.t = (pl.t || 0) + dt;
+      var w = pl.speed / Math.max(1, pl.range);
+      var off = Math.sin(pl.t * w + pl.phase) * pl.range;
+      var nx = pl.baseX, ny = pl.baseY;
+      if (pl.axis === "x") nx = pl.baseX + off; else ny = pl.baseY + off;
+      dx = nx - pl.x; dy = ny - pl.y;
+      pl.x = nx; pl.y = ny;
+    }
+    deltas.push({ dx: dx, dy: dy });
+  }
+  return deltas;
+}
+
+// --- collision helpers (rects are top-left {x, y, w, h}; 0.8 shrink
+// keeps hazard hits forgiving — a graze is not a hit) ---
+function rectsOverlap(a, b) {
+  var aw = a.w * 0.4, ah = a.h * 0.4, bw = b.w * 0.4, bh = b.h * 0.4;
+  return Math.abs((a.x + a.w / 2) - (b.x + b.w / 2)) < aw + bw &&
+         Math.abs((a.y + a.h / 2) - (b.y + b.h / 2)) < ah + bh;
+}
+function coinHit(player, coin) { return rectsOverlap(player, coin); }
+function spikeHit(player, spike) { return rectsOverlap(player, spike); }
+// Stomp: falling onto the top 60% of the enemy. Anything else that
+// overlaps is a side hit.
+function enemyHit(player, enemy) {
+  if (!rectsOverlap(player, enemy)) return "none";
+  if (player.vy > 0 && (player.y + player.h) - enemy.y < enemy.h * 0.6) return "stomp";
+  return "side";
+}
+// One lost life: lose a life; game over when the last life is gone.
+function applyCrash(lives) {
+  var left = Math.max(0, lives - 1);
+  return { lives: left, gameOver: left <= 0 };
+}
+// __PURE_LOGIC_END__
+
+// ================= game (DOM + render + input) =================
+var canvas = document.getElementById("boardCanvas");
+var ctx = canvas.getContext("2d");
+// DPR backing store + setTransform; single uniform logical space 960x600,
+// letterboxed by the CSS aspect-ratio container (never independent X/Y scale).
+function resizeCanvas() {
+  var dpr = (window.devicePixelRatio || 1);
+  canvas.width = Math.round(960 * dpr);
+  canvas.height = Math.round(600 * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+resizeCanvas();
+if (window.addEventListener) window.addEventListener("resize", resizeCanvas);
+
+// prefers-reduced-motion gates ALL shake/particles/flash (juice is opt-in).
+var REDUCED_MOTION = false;
+try {
+  REDUCED_MOTION = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+} catch (e) { REDUCED_MOTION = false; }
+
+var SAVE = loadSave();
+// scene machine: single string, boot -> menu -> playing -> paused -> results.
+// Side effects happen on the boundary (setState), never per frame.
+function setState(s) {
+  G.state = s;
+  try { window.__state = s; } catch (e) {}
+}
+try { window.__state = "menu"; } catch (e) {}
+
+var G = {
+  state: "menu",           // menu | playing | paused | results
+  level: 1, lives: START_LIVES, coins: 0, stomps: 0, time: 0, timeBonus: 0,
+  player: makePlayer(50, 500), levelData: null,
+  platforms: [], coinsLeft: [], spikes: [], enemies: [],
+  invulnT: 0, shakeT: 0, flashT: 0, clock: 0, attractT: 0,
+  tutorial: { active: false },
+  popups: [], particles: [],
+  // separate visual-only rng (shake, particles, clouds) so visual juice
+  // never perturbs the gameplay spawn stream
+  visRng: mulberry32((SAVE.seed ^ 0x9e3779b9) >>> 0),
+  touch: { left: false, right: false }
+};
+
+function $(id) { return document.getElementById(id); }
+function show(el, on) { el.classList.toggle("hidden", !on); }
+function announce(text) { var lr = $("liveRegion"); if (lr) lr.textContent = text; }
+function score() { return levelScore(G.coins, G.stomps, G.timeBonus); }
+function formatTime(t) {
+  var s = Math.floor(t);
+  return Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2);
+}
+// juice particles (gated behind prefers-reduced-motion); visual rng only.
+function spawnBurst(x, y, color, n) {
+  if (REDUCED_MOTION) return;
+  for (var i = 0; i < n; i++) {
+    var a = G.visRng() * Math.PI * 2, sp = 60 + G.visRng() * 220;
+    G.particles.push({ x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 80,
+                       life: 0.5 + G.visRng() * 0.4, max: 0.9, color: color, r: 3 + G.visRng() * 4 });
+  }
+}
+
+// ---------- audio (tiny WebAudio blips, no files) ----------
+var AudioSys = {
+  ctx: null, enabled: true,
+  ensure: function () {
+    if (this.ctx) return this.ctx;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      this.ctx = new AC();
+    } catch (e) { this.ctx = null; }
+    return this.ctx;
+  },
+  unlock: function () {
+    var ac = this.ensure(); if (!ac) return;
+    try { if (ac.state === "suspended") ac.resume(); } catch (e) {}
+  },
+  tone: function (freq, dur, type, vol, slideTo, delay) {
+    if (SAVE.muted) return;
+    var ac = this.ensure(); if (!ac) return;
+    try {
+      var t0 = ac.currentTime + (delay || 0);
+      var o = ac.createOscillator(), g = ac.createGain();
+      o.type = type || "sine"; o.frequency.setValueAtTime(freq, t0);
+      if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+      g.gain.setValueAtTime(vol || 0.15, t0);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+      o.connect(g); g.connect(ac.destination);
+      o.start(t0); o.stop(t0 + dur);
+    } catch (e) {}
+  },
+  noise: function (dur, vol) {
+    if (SAVE.muted) return;
+    var ac = this.ensure(); if (!ac) return;
+    try {
+      var len = Math.floor(ac.sampleRate * dur);
+      var buf = ac.createBuffer(1, len, ac.sampleRate);
+      var data = buf.getChannelData(0);
+      // NOTE: Math.random here fills an audio noise buffer only — it is
+      // not gameplay randomness (all gameplay randomness is mulberry32).
+      for (var i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      var src = ac.createBufferSource(); src.buffer = buf;
+      var f = ac.createBiquadFilter(); f.type = "bandpass"; f.frequency.value = 1200;
+      var g = ac.createGain(); g.gain.value = vol || 0.25;
+      src.connect(f); f.connect(g); g.connect(ac.destination); src.start();
+    } catch (e) {}
+  },
+  coin: function () { this.tone(880, 0.08, "sine", 0.15); this.tone(1318, 0.12, "sine", 0.15, 0, 0.07); },
+  jump: function () { this.tone(300, 0.16, "square", 0.08, 640); },
+  stomp: function () { this.tone(220, 0.12, "square", 0.15, 90); this.noise(0.08, 0.12); },
+  hurt: function () { this.noise(0.3, 0.35); this.tone(220, 0.4, "sawtooth", 0.15, 60); },
+  win: function () {
+    this.tone(523, 0.12, "sine", 0.15);
+    this.tone(659, 0.12, "sine", 0.15, 0, 0.11);
+    this.tone(784, 0.12, "sine", 0.15, 0, 0.22);
+    this.tone(1046, 0.25, "sine", 0.15, 0, 0.33);
+  },
+  click: function () { this.tone(660, 0.06, "sine", 0.1); }
+};
+
+// ---------- save / menu ----------
+function persistSave() { saveSave(SAVE); }
+function updateMenu() {
+  $("menuBestScore").textContent = String(SAVE.best);
+  $("menuBestLevel").textContent = String(SAVE.bestLevel);
+  $("menuRank").textContent = rankForScore(SAVE.best);
+  $("menuCoins").textContent = String(SAVE.coins);
+  $("menuBest").textContent = "Best score: " + SAVE.best + " — " + rankForScore(SAVE.best) +
+    (SAVE.bestLevel > 0 ? " — best level " + SAVE.bestLevel + " / 12" : "");
+  // rank progress: how far to the next rank, as a bar + a line of text
+  var next = rankNextAt(SAVE.best);
+  var bar = $("menuRankBar"), nxt = $("menuRankNext");
+  if (bar) bar.style.width = (next === null ? 100 : Math.min(100, Math.floor(SAVE.best / next * 100))) + "%";
+  if (nxt) {
+    nxt.textContent = next === null
+      ? "Legend — the top rank. Now chase a higher score!"
+      : (next - SAVE.best) + " pts to " + rankForScore(next) + " — best " + SAVE.best + " pts";
+  }
+  // daily bonus hint: claimed today, or waiting on the first run
+  var daily = $("menuDaily");
+  if (daily) {
+    daily.textContent = SAVE.lastDaily === todayString()
+      ? "\uD83D\uDD25 Daily streak " + SAVE.dailyStreak + " — bonus claimed, come back tomorrow for the next one!"
+      : "\uD83C\uDF81 Daily bonus waiting — your first run today claims +50–500 coins! (streak " + SAVE.dailyStreak + ")";
+  }
+  // level buttons: locked past the highest unlocked level
+  for (var i = 1; i <= MAX_LEVELS; i++) {
+    var b = $("lvlBtn" + i);
+    if (b) b.disabled = i > SAVE.unlocked;
+  }
+}
+function showMenu() {
+  setState("menu");
+  show($("resultsOverlay"), false);
+  show($("pauseOverlay"), false);
+  show($("tutorialBar"), false);
+  show($("menuOverlay"), true);
+  updateMenu();
+  updateHUD();
+}
+function toggleMute() {
+  SAVE.muted = !SAVE.muted;
+  persistSave();
+  $("btnSound").textContent = SAVE.muted ? "\uD83D\uDD07 Sound: Off" : "\uD83D\uDD0A Sound: On";
+  return SAVE.muted;
+}
+
+// ---------- tutorial (single hint on first play) ----------
+// The tutorial PAUSES the game by design (see TUTORIAL-PAUSE-FIX): while
+// the bar is up, stepGame() returns immediately, so the level timer does
+// not tick and nothing spawns or moves until the player dismisses it.
+function startTutorial() {
+  G.tutorial.active = true;
+  $("tutorialText").textContent =
+    "Run with Arrow keys / A D (or the on-screen buttons). Jump with Space / Up / W — hold for a higher jump, tap for a short hop. Grab coins, stomp enemies, dodge spikes and reach the flag!";
+  show($("tutorialBar"), true);
+}
+function endTutorial() {
+  if (!G.tutorial.active) return;
+  G.tutorial.active = false;
+  SAVE.tutorialSeen = true;
+  persistSave();
+  show($("tutorialBar"), false);
+}
+
+// ---------- level loading ----------
+function loadLevel(level) {
+  var data = generateLevel(SAVE.seed, level);
+  G.levelData = data;
+  G.platforms = data.platforms;
+  // fresh copies of the collectables / enemies so a retry restores them
+  G.coinsLeft = data.coins.map(function (c) { return { x: c.x, y: c.y, w: c.w, h: c.h, taken: false }; });
+  G.spikes = data.spikes;
+  G.enemies = data.enemies.map(function (e) {
+    return { x: e.x, baseX: e.baseX, y: e.y, w: e.w, h: e.h,
+             speed: e.speed, range: e.range, dir: e.dir };
+  });
+  G.player = makePlayer(data.spawn.x, data.spawn.y);
+  G.time = 0; G.timeBonus = 0;
+  G.popups = []; G.particles = [];
+  G.invulnT = 0; G.shakeT = 0; G.flashT = 0;
+}
+
+// ---------- game flow ----------
+function startGame(level) {
+  var lv = level || G.level || 1;
+  if (lv < 1) lv = 1;
+  if (lv > MAX_LEVELS) lv = MAX_LEVELS;
+  G.level = lv; G.lives = START_LIVES; G.coins = 0; G.stomps = 0;
+  loadLevel(lv);
+  // daily bonus is claimed once per day, on the first run of the day
+  var daily = claimDaily(SAVE, todayString());
+  if (daily.claimed) {
+    G.popups.push({ x: W / 2, y: 300, text: "DAILY BONUS +" + daily.reward + " COINS!",
+                    life: 2, max: 2 });
+    announce("Daily bonus claimed: " + daily.reward + " coins, streak " + daily.streak + ".");
+  }
+  persistSave();
+  setState("playing");
+  show($("menuOverlay"), false);
+  show($("resultsOverlay"), false);
+  show($("pauseOverlay"), false);
+  show($("tutorialBar"), false);
+  if (!SAVE.tutorialSeen) startTutorial();
+  updateHUD();
+}
+function crash() {
+  // Lose a life (spike hit, side hit by an enemy, or a long fall).
+  var res = applyCrash(G.lives);
+  G.lives = res.lives;
+  G.invulnT = INVULN_TIME;
+  if (!REDUCED_MOTION) G.shakeT = 0.35;
+  if (!REDUCED_MOTION) G.flashT = 0.35;
+  spawnBurst(G.player.x + G.player.w / 2, G.player.y + G.player.h / 2, "#ff6b6b", 18);
+  AudioSys.hurt();
+  announce("Ouch! " + G.lives + " lives left.");
+  if (res.gameOver) { gameOver(); return; }
+  // respawn at the level start; collected coins and stomps stay banked
+  var sp = G.levelData.spawn;
+  G.player = makePlayer(sp.x, sp.y);
+  G.enemies = G.levelData.enemies.map(function (e) {
+    return { x: e.x, baseX: e.baseX, y: e.y, w: e.w, h: e.h,
+             speed: e.speed, range: e.range, dir: e.dir };
+  });
+  updateHUD();
+}
+function gameOver() {
+  setState("results");
+  var isBest = score() > SAVE.best;
+  if (isBest) SAVE.best = score();
+  SAVE.coins += G.coins;
+  persistSave();
+  $("resultsTitle").textContent = "Game Over";
+  $("finalScore").textContent = String(score());
+  $("finalLevel").textContent = String(G.level);
+  $("finalCoins").textContent = String(G.coins);
+  $("finalStomps").textContent = String(G.stomps);
+  $("finalTime").textContent = formatTime(G.time);
+  $("finalTimeBonus").textContent = "+0";
+  $("finalRank").textContent = rankForScore(SAVE.best);
+  $("finalBest").textContent = String(SAVE.best);
+  var next = rankNextAt(SAVE.best);
+  $("resultsSub").textContent = next === null
+    ? "Legend! You have reached the top rank — now chase a higher score."
+    : "You scored " + score() + " pts on level " + G.level + ". " + (next - SAVE.best) + " pts more to reach " + rankForScore(next) + "!";
+  show($("newBestBadge"), isBest && score() > 0);
+  show($("btnNextLevel"), false);
+  show($("resultsOverlay"), true);
+  show($("tutorialBar"), false);
+  announce("Game over. Score " + score() + ", best " + SAVE.best + ".");
+  updateHUD();
+}
+function levelComplete() {
+  setState("results");
+  G.timeBonus = timeBonusForLevel(G.level, G.time);
+  var finalScore = score();
+  var isBest = finalScore > SAVE.best;
+  if (isBest) SAVE.best = finalScore;
+  if (G.level > SAVE.bestLevel) SAVE.bestLevel = G.level;
+  if (G.level < MAX_LEVELS && SAVE.unlocked < G.level + 1) SAVE.unlocked = G.level + 1;
+  SAVE.coins += G.coins;
+  persistSave();
+  AudioSys.win();
+  spawnBurst(G.levelData.flag.x, G.levelData.flag.y, "#ffd166", 24);
+  // big level-complete banner with the time bonus (decays on the
+  // results screen — see update(), which keeps popups ticking there)
+  G.popups.push({ x: W / 2, y: 240, text: "LEVEL COMPLETE! +" + G.timeBonus,
+                  life: 1.8, max: 1.8, big: true });
+  $("resultsTitle").textContent = G.level >= MAX_LEVELS ? "You Finished All 12 Levels!" : "Level " + G.level + " Complete!";
+  $("finalScore").textContent = String(finalScore);
+  $("finalLevel").textContent = String(G.level);
+  $("finalCoins").textContent = String(G.coins);
+  $("finalStomps").textContent = String(G.stomps);
+  $("finalTime").textContent = formatTime(G.time);
+  $("finalTimeBonus").textContent = "+" + G.timeBonus;
+  $("finalRank").textContent = rankForScore(SAVE.best);
+  $("finalBest").textContent = String(SAVE.best);
+  $("resultsSub").textContent = G.level >= MAX_LEVELS
+    ? "Amazing — every level cleared! Replay any level to beat your time bonus."
+    : "Flag reached in " + formatTime(G.time) + " (par " + formatTime(G.levelData.par) + ") — time bonus +" + G.timeBonus + ". Level " + (G.level + 1) + " is now unlocked!";
+  show($("newBestBadge"), isBest && finalScore > 0);
+  show($("btnNextLevel"), G.level < MAX_LEVELS);
+  show($("resultsOverlay"), true);
+  show($("tutorialBar"), false);
+  announce("Level " + G.level + " complete! Score " + finalScore + ", time bonus " + G.timeBonus + ".");
+  updateHUD();
+}
+function pauseGame() {
+  if (G.state !== "playing") return;
+  setState("paused");
+  $("pauseScore").textContent = String(score());
+  $("pauseLevel").textContent = String(G.level);
+  $("pauseLives").textContent = String(G.lives);
+  show($("pauseOverlay"), true);
+}
+function resumeGame() {
+  if (G.state !== "paused") return;
+  setState("playing");
+  show($("pauseOverlay"), false);
+}
+function updateHUD() {
+  $("hudScore").textContent = String(score());
+  $("hudLevel").textContent = String(G.level) + " / " + MAX_LEVELS;
+  var hearts = "";
+  for (var i = 0; i < G.lives; i++) hearts += "\u2764";
+  $("hudLivesVal").textContent = hearts || "\u2014";
+  $("hudCoinsVal").textContent = String(G.coins);
+  $("hudTimeVal").textContent = formatTime(G.time);
+}
+
+// ---------- per-frame step ----------
+function stepGame(dt) {
+  if (G.state !== "playing") return;
+  // Tutorial pause (by design): while the HOW TO PLAY bar is up, the
+  // timer does not tick and nothing moves or spawns.
+  if (G.tutorial.active) return;
+  // timers
+  if (G.invulnT > 0) { G.invulnT -= dt; if (G.invulnT < 0) G.invulnT = 0; }
+  if (G.shakeT > 0) { G.shakeT -= dt; if (G.shakeT < 0) G.shakeT = 0; }
+  if (G.flashT > 0) { G.flashT -= dt; if (G.flashT < 0) G.flashT = 0; }
+  G.time += dt;
+  var p = G.player;
+  // squash-and-stretch easing (visual only)
+  p.squash += (0 - p.squash) * Math.min(1, dt * 10);
+  // moving platforms first: a standing player is carried by the delta
+  var deltas = updatePlatforms(G.platforms, dt);
+  if (p.standingPlat) {
+    for (var di = 0; di < G.platforms.length; di++) {
+      if (G.platforms[di] === p.standingPlat && (deltas[di].dx !== 0 || deltas[di].dy !== 0)) {
+        p.x += deltas[di].dx;
+        p.y += deltas[di].dy;
+      }
+    }
+  }
+  // input (keyboard held in a Set + touch buttons, read here).
+  // Jump buffering is fed by the keydown / touch handlers, which set
+  // bufferT directly — physicsStep only decays it, so pass false here.
+  var input = {
+    left: !!(keysDown["ArrowLeft"] || keysDown["a"] || keysDown["A"] || G.touch.left),
+    right: !!(keysDown["ArrowRight"] || keysDown["d"] || keysDown["D"] || G.touch.right),
+    jumpPressed: false
+  };
+  var vyBefore = p.vy;
+  var phys = physicsStep(p, input, dt);
+  if (phys.jumped) {
+    p.squash = -0.14; // stretch on jump-off
+    AudioSys.jump();
+  }
+  var col = moveAndCollide(p, G.platforms, dt);
+  if (col.landed && vyBefore > 200) p.squash = 0.18; // squash on a hard landing
+  // enemies patrol their range
+  for (var ei = 0; ei < G.enemies.length; ei++) {
+    var e = G.enemies[ei];
+    e.x += e.dir * e.speed * dt;
+    if (e.x > e.baseX + e.range) { e.x = e.baseX + e.range; e.dir = -1; }
+    if (e.x < e.baseX - e.range) { e.x = e.baseX - e.range; e.dir = 1; }
+  }
+  // particles + popups
+  for (var pi = G.particles.length - 1; pi >= 0; pi--) {
+    var pt = G.particles[pi];
+    pt.vy += 700 * dt; pt.x += pt.vx * dt; pt.y += pt.vy * dt; pt.life -= dt;
+    if (pt.life <= 0) G.particles.splice(pi, 1);
+  }
+  for (var i = G.popups.length - 1; i >= 0; i--) {
+    G.popups[i].life -= dt;
+    if (G.popups[i].life <= 0) G.popups.splice(i, 1);
+  }
+  // coins
+  for (var ci = 0; ci < G.coinsLeft.length; ci++) {
+    var cn = G.coinsLeft[ci];
+    if (cn.taken) continue;
+    if (coinHit(p, cn)) {
+      cn.taken = true;
+      G.coins++;
+      G.popups.push({ x: cn.x + 12, y: cn.y - 10, text: "+25", life: 0.9, max: 0.9 });
+      spawnBurst(cn.x + 12, cn.y + 12, "#ffd166", 8);
+      AudioSys.coin();
+      announce("Coin! +" + COIN_SCORE + " points.");
+    }
+  }
+  // spikes (skipped while invulnerable)
+  if (G.invulnT <= 0) {
+    for (var si = 0; si < G.spikes.length; si++) {
+      if (spikeHit(p, G.spikes[si])) {
+        crash();
+        p = G.player; // crash() respawns the player (new object)
+        if (G.state !== "playing") { updateHUD(); return; }
+        break;
+      }
+    }
+  }
+  // enemies: stomp or side hit
+  if (G.state === "playing") {
+    for (var qi = G.enemies.length - 1; qi >= 0; qi--) {
+      var en = G.enemies[qi];
+      var hit = enemyHit(p, en);
+      if (hit === "stomp") {
+        G.enemies.splice(qi, 1);
+        G.stomps++;
+        p.vy = -380; // stomp bounce
+        p.onGround = false;
+        G.popups.push({ x: en.x + 16, y: en.y - 10, text: "+50", life: 0.9, max: 0.9 });
+        spawnBurst(en.x + 16, en.y + 14, "#b388ff", 10);
+        AudioSys.stomp();
+        announce("Stomped! +" + STOMP_SCORE + " points.");
+      } else if (hit === "side") {
+        if (G.invulnT <= 0) {
+          crash();
+          p = G.player; // crash() respawns the player (new object)
+          if (G.state !== "playing") { updateHUD(); return; }
+        }
+        break;
+      }
+    }
+  }
+  // fell out of the world (safety net — the ground spans the full width,
+  // so this should never trigger, but a moving platform must not strand you)
+  if (p.y > H + 40) {
+    if (G.invulnT <= 0) { crash(); p = G.player; }
+    if (G.state !== "playing") { updateHUD(); return; }
+  }
+  // flag: level complete
+  if (G.state === "playing" && rectsOverlap(p, G.levelData.flag)) {
+    levelComplete();
+    updateHUD();
+    return;
+  }
+  updateHUD();
+}
+
+// ---------- input ----------
+// Keyboard: keys held in a Set, read inside update() — handlers never act directly,
+// except the jump buffer (set on keydown so the press is never missed
+// between frames) and the variable-jump cut (on keyup).
+var keysDown = {};
+function isJumpKey(k) { return k === " " || k === "ArrowUp" || k === "w" || k === "W"; }
+if (typeof window !== "undefined" && window.addEventListener) {
+  window.addEventListener("keydown", function (e) {
+    keysDown[e.key] = true;
+    if (isJumpKey(e.key) && G.state === "playing" && !G.tutorial.active) {
+      G.player.bufferT = JUMP_BUFFER;
+    }
+    if (e.key === " " || e.key === "ArrowUp" || e.key === "ArrowDown" ||
+        e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      if (e.preventDefault) e.preventDefault();
+    }
+  });
+  window.addEventListener("keyup", function (e) {
+    delete keysDown[e.key];
+    // variable jump height: releasing the jump key early cuts the hop
+    if (isJumpKey(e.key) && G.state === "playing") jumpCut(G.player);
+  });
+}
+function handleKeys() {
+  // jump keys also dismiss the tutorial (first jump = "I got it")
+  if (G.tutorial.active) {
+    if (keysDown[" "] || keysDown["ArrowUp"] || keysDown["w"] || keysDown["W"] ||
+        keysDown["ArrowLeft"] || keysDown["ArrowRight"] || keysDown["a"] || keysDown["d"]) {
+      endTutorial();
+      delete keysDown[" "]; delete keysDown["ArrowUp"];
+      delete keysDown["w"]; delete keysDown["W"];
+    }
+    return;
+  }
+  // in play, a jump key press arms the jump buffer (consumed by physicsStep)
+  if (G.state === "playing" &&
+      (keysDown[" "] || keysDown["ArrowUp"] || keysDown["w"] || keysDown["W"])) {
+    G.player.bufferT = JUMP_BUFFER;
+    delete keysDown[" "]; delete keysDown["ArrowUp"];
+    delete keysDown["w"]; delete keysDown["W"];
+  }
+  if (keysDown[" "] || keysDown["Enter"]) {
+    delete keysDown[" "]; delete keysDown["Enter"];
+    if (G.state === "menu") startGame();
+    else if (G.state === "results") startGame();
+    else if (G.state === "paused") resumeGame();
+  }
+  if (keysDown["p"] || keysDown["P"]) {
+    delete keysDown["p"]; delete keysDown["P"];
+    if (G.state === "playing") pauseGame();
+    else if (G.state === "paused") resumeGame();
+  }
+}
+// update() mutates state only; render() draws only.
+function update(dt) {
+  G.clock += dt;
+  handleKeys();
+  if (G.state === "menu") {
+    // attract mode: the hero idles/bounces on the ground behind the
+    // title screen and the coins sparkle, so the menu feels alive.
+    G.attractT += dt;
+  }
+  if (G.state === "results") {
+    // let the level-complete banner + confetti finish animating behind
+    // the results overlay instead of freezing mid-air
+    for (var pi = G.particles.length - 1; pi >= 0; pi--) {
+      var pt = G.particles[pi];
+      pt.vy += 700 * dt; pt.x += pt.vx * dt; pt.y += pt.vy * dt; pt.life -= dt;
+      if (pt.life <= 0) G.particles.splice(pi, 1);
+    }
+    for (var i = G.popups.length - 1; i >= 0; i--) {
+      G.popups[i].life -= dt;
+      if (G.popups[i].life <= 0) G.popups.splice(i, 1);
+    }
+    return;
+  }
+  stepGame(dt);
+}
+
+// ---------- buttons ----------
+$("btnPlay").addEventListener("click", function () { AudioSys.click(); startGame(SAVE.unlocked); });
+$("btnRetry").addEventListener("click", function () { AudioSys.click(); startGame(); });
+$("btnNextLevel").addEventListener("click", function () { AudioSys.click(); startGame(G.level + 1); });
+$("btnMenu").addEventListener("click", function () { AudioSys.click(); showMenu(); });
+$("btnPause").addEventListener("click", function () { AudioSys.click(); pauseGame(); });
+$("btnResume").addEventListener("click", function () { AudioSys.click(); resumeGame(); });
+$("btnRestart").addEventListener("click", function () { AudioSys.click(); if (G.state === "playing" || G.state === "paused") startGame(); });
+$("btnRestartPause").addEventListener("click", function () { AudioSys.click(); startGame(); });
+$("btnSound").addEventListener("click", function () { toggleMute(); });
+$("btnSkipTutorial").addEventListener("click", function () { endTutorial(); });
+for (var li = 1; li <= MAX_LEVELS; li++) {
+  (function (lv) {
+    $("lvlBtn" + lv).addEventListener("click", function () {
+      AudioSys.click();
+      if (lv <= SAVE.unlocked) startGame(lv);
+    });
+  })(li);
+}
+if (SAVE.muted) $("btnSound").textContent = "\uD83D\uDD07 Sound: Off";
+// touch buttons: hold left/right, tap jump
+function bindTouch(id, down, up) {
+  var el = $(id);
+  el.addEventListener("pointerdown", function (e) { if (e.preventDefault) e.preventDefault(); AudioSys.unlock(); down(); });
+  el.addEventListener("pointerup", function () { up(); });
+  el.addEventListener("pointerleave", function () { up(); });
+  el.addEventListener("pointercancel", function () { up(); });
+}
+bindTouch("btnLeft", function () { G.touch.left = true; }, function () { G.touch.left = false; });
+bindTouch("btnRight", function () { G.touch.right = true; }, function () { G.touch.right = false; });
+bindTouch("btnJump", function () {
+  if (G.state === "playing") {
+    if (G.tutorial.active) endTutorial();
+    else G.player.bufferT = JUMP_BUFFER;
+  }
+}, function () { if (G.state === "playing") jumpCut(G.player); });
+
+// ---------- render ----------
+function drawPlatform(pl) {
+  ctx.save();
+  if (pl.type === "moving") {
+    ctx.fillStyle = "#8d6e63";
+    ctx.beginPath(); ctx.roundRect(pl.x - 2, pl.y - 2, pl.w + 4, pl.h + 4, 8); ctx.fill();
+  }
+  // dirt body
+  ctx.fillStyle = "#8d5a2b";
+  ctx.beginPath(); ctx.roundRect(pl.x, pl.y, pl.w, pl.h, 6); ctx.fill();
+  // grass top (pale green for one-way platforms so they read as pass-through)
+  ctx.fillStyle = pl.oneWay ? "#a5d6a7" : "#43a047";
+  ctx.beginPath(); ctx.roundRect(pl.x, pl.y, pl.w, 10, 5); ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,0.25)";
+  ctx.fillRect(pl.x + 4, pl.y + 2, pl.w - 8, 3);
+  ctx.restore();
+}
+function drawCoin(cn, t) {
+  ctx.save();
+  ctx.translate(cn.x + 12, cn.y + 12);
+  var tw = 1 + 0.12 * Math.sin(t * 6 + cn.x * 0.05);
+  ctx.scale(tw, tw);
+  ctx.fillStyle = "#b8860b";
+  ctx.beginPath(); ctx.arc(0, 0, 13, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#ffd166";
+  ctx.beginPath(); ctx.arc(0, 0, 10, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#b8860b";
+  ctx.font = "900 13px 'Trebuchet MS', Verdana, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("\u2605", 0, 5);
+  ctx.restore();
+}
+function drawSpike(sp) {
+  ctx.save();
+  ctx.fillStyle = "#90a4ae";
+  ctx.strokeStyle = "#546e7a";
+  ctx.lineWidth = 2;
+  for (var i = 0; i < 3; i++) {
+    var x0 = sp.x + i * 12;
+    ctx.beginPath();
+    ctx.moveTo(x0, sp.y + sp.h);
+    ctx.lineTo(x0 + 6, sp.y);
+    ctx.lineTo(x0 + 12, sp.y + sp.h);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawEnemy(e, t) {
+  ctx.save();
+  // waddle: slight bob as it walks
+  var bob = Math.sin(t * 8 + e.x * 0.05) * 2;
+  ctx.translate(e.x + e.w / 2, e.y + e.h / 2 + bob);
+  ctx.fillStyle = "#7e57c2";
+  ctx.beginPath(); ctx.roundRect(-e.w / 2, -e.h / 2, e.w, e.h, 10); ctx.fill();
+  // angry eyes look toward the walk direction
+  var ex = e.dir * 4;
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath(); ctx.arc(-6 + ex, -4, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(6 + ex, -4, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#1a1a1a";
+  ctx.beginPath(); ctx.arc(-6 + ex * 1.5, -4, 2.2, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(6 + ex * 1.5, -4, 2.2, 0, Math.PI * 2); ctx.fill();
+  // feet
+  ctx.fillStyle = "#5e35b1";
+  ctx.fillRect(-e.w / 2 + 2, e.h / 2 - 4, 10, 4);
+  ctx.fillRect(e.w / 2 - 12, e.h / 2 - 4, 10, 4);
+  ctx.restore();
+}
+function drawFlag(f, t) {
+  ctx.save();
+  ctx.fillStyle = "#8d6e63";
+  ctx.fillRect(f.x + 12, f.y - 14, 5, f.h + 14);
+  // waving flag (wave phase from the clock)
+  var wave = Math.sin(t * 5) * 4;
+  ctx.fillStyle = "#43a047";
+  ctx.beginPath();
+  ctx.moveTo(f.x + 17, f.y - 14);
+  ctx.lineTo(f.x + 17 + 34, f.y - 8 + wave);
+  ctx.lineTo(f.x + 17, f.y - 2);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#ffd54f";
+  ctx.beginPath(); ctx.arc(f.x + 14, f.y - 16, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+function drawPlayer(p) {
+  ctx.save();
+  // squash-and-stretch: squash > 0 = squashed (wide/short), < 0 = stretched
+  var sx = 1 + p.squash, sy = 1 - p.squash;
+  ctx.translate(p.x + p.w / 2, p.y + p.h);
+  ctx.scale(sx, sy);
+  ctx.translate(-p.w / 2, -p.h);
+  // invulnerability flash: skip alternate 0.1 s slices
+  if (!(G.invulnT > 0 && Math.floor(G.invulnT * 10) % 2 === 0)) {
+    // body
+    ctx.fillStyle = "#ff7043";
+    ctx.beginPath(); ctx.roundRect(0, 6, p.w, p.h - 10, 12); ctx.fill();
+    // belly
+    ctx.fillStyle = "#ffccbc";
+    ctx.beginPath(); ctx.ellipse(p.w / 2, p.h - 14, 11, 9, 0, 0, Math.PI * 2); ctx.fill();
+    // eyes look toward the facing direction
+    var ex = p.facing * 3;
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath(); ctx.arc(p.w / 2 - 8 + ex, 16, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(p.w / 2 + 8 + ex, 16, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#1a1a1a";
+    ctx.beginPath(); ctx.arc(p.w / 2 - 8 + ex * 1.6, 16, 2.4, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(p.w / 2 + 8 + ex * 1.6, 16, 2.4, 0, Math.PI * 2); ctx.fill();
+    // feet
+    ctx.fillStyle = "#5d4037";
+    ctx.fillRect(4, p.h - 5, 10, 5);
+    ctx.fillRect(p.w - 14, p.h - 5, 10, 5);
+    // little red cap
+    ctx.fillStyle = "#e53935";
+    ctx.beginPath(); ctx.arc(p.w / 2, 8, 12, Math.PI, 0); ctx.fill();
+    ctx.fillRect(p.w / 2 - 12, 6, 24, 4);
+  }
+  ctx.restore();
+}
+function render() {
+  var shX = 0, shY = 0;
+  if (G.shakeT > 0 && !REDUCED_MOTION) {
+    shX = (G.visRng() - 0.5) * 14;
+    shY = (G.visRng() - 0.5) * 14;
+  }
+  ctx.save();
+  ctx.translate(shX, shY);
+  // cheerful sky
+  var sky = ctx.createLinearGradient(0, 0, 0, 600);
+  sky.addColorStop(0, "#7ec8f7");
+  sky.addColorStop(0.55, "#a8dcff");
+  sky.addColorStop(1, "#d8f3c0");
+  ctx.fillStyle = sky; ctx.fillRect(-20, -20, 1000, 640);
+  // sun
+  ctx.fillStyle = "#fff3c4";
+  ctx.beginPath(); ctx.arc(700, 88, 46, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "rgba(255,243,196,0.4)";
+  ctx.beginPath(); ctx.arc(700, 88, 60, 0, Math.PI * 2); ctx.fill();
+  // drifting clouds (visual only)
+  ctx.fillStyle = "rgba(255,255,255,0.9)";
+  for (var ci = 0; ci < 4; ci++) {
+    var cx = ((ci * 260 + G.clock * 12) % 1100) - 70;
+    var cy = 60 + ci * 55;
+    ctx.beginPath(); ctx.ellipse(cx, cy, 42, 16, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + 30, cy + 6, 30, 12, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  // green hills
+  ctx.fillStyle = "#81c784";
+  ctx.beginPath(); ctx.ellipse(180, 600, 320, 120, 0, Math.PI, 0); ctx.fill();
+  ctx.fillStyle = "#66bb6a";
+  ctx.beginPath(); ctx.ellipse(780, 610, 360, 130, 0, Math.PI, 0); ctx.fill();
+  // level (or the level-1 backdrop behind the menu)
+  var data = G.levelData;
+  if (data) {
+    for (var pi = 0; pi < G.platforms.length; pi++) drawPlatform(G.platforms[pi]);
+    drawFlag(data.flag, G.clock);
+    for (var qi = 0; qi < G.coinsLeft.length; qi++) {
+      if (!G.coinsLeft[qi].taken) drawCoin(G.coinsLeft[qi], G.clock);
+    }
+    for (var si = 0; si < G.spikes.length; si++) drawSpike(G.spikes[si]);
+    for (var ei = 0; ei < G.enemies.length; ei++) drawEnemy(G.enemies[ei], G.clock);
+  }
+  // player — in the menu it idles/bounces on the ground (attract mode)
+  if (G.state === "menu" && data) {
+    var bounce = Math.abs(Math.sin(G.attractT * 3)) * 26;
+    var ghost = { x: 88, y: 556 - PLAYER_H - bounce, w: PLAYER_W, h: PLAYER_H,
+                  facing: 1, squash: bounce > 20 ? -0.1 : 0.08 };
+    var keepInv = G.invulnT; G.invulnT = 0;
+    drawPlayer(ghost);
+    G.invulnT = keepInv;
+  } else if (data) {
+    drawPlayer(G.player);
+  }
+
+  // particles (juice; skipped entirely under prefers-reduced-motion)
+  for (var q = 0; q < G.particles.length; q++) {
+    var pt = G.particles[q];
+    ctx.globalAlpha = Math.max(0, pt.life / pt.max);
+    ctx.fillStyle = pt.color;
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // popups (level-complete / daily-bonus banners render bigger)
+  ctx.textAlign = "center";
+  for (var k = 0; k < G.popups.length; k++) {
+    var p = G.popups[k];
+    var a = Math.max(0, p.life / p.max);
+    ctx.globalAlpha = a;
+    ctx.font = p.big ? "900 34px 'Trebuchet MS', Verdana, sans-serif" : "900 26px 'Trebuchet MS', Verdana, sans-serif";
+    ctx.fillStyle = "#e65100";
+    ctx.strokeStyle = "rgba(255,255,255,0.85)";
+    ctx.lineWidth = 4;
+    ctx.strokeText(p.text, p.x, p.y - (p.max - p.life) * 40);
+    ctx.fillText(p.text, p.x, p.y - (p.max - p.life) * 40);
+  }
+  ctx.globalAlpha = 1;
+
+  // red hurt flash (skipped under prefers-reduced-motion)
+  if (G.flashT > 0 && !REDUCED_MOTION) {
+    ctx.fillStyle = "rgba(255,40,40," + (G.flashT * 0.45).toFixed(3) + ")";
+    ctx.fillRect(-20, -20, 1000, 640);
+  }
+  ctx.restore();
+}
+
+// ---------- main loop: fixed-timestep accumulator (60 Hz) ----------
+// Frame delta is clamped to <=250 ms BEFORE accumulating, so a tab-switch
+// or hitch can never spiral into a catch-up storm.
+var ACC = 0, LAST = 0;
+function loop(ts) {
+  requestAnimationFrame(loop);
+  if (!LAST) LAST = ts || 0;
+  var frameDt = ((ts || 0) - LAST) / 1000;
+  LAST = ts || 0;
+  if (!(frameDt > 0)) frameDt = 0.016;
+  if (frameDt > 0.25) frameDt = 0.25;
+  ACC += frameDt;
+  var steps = 0;
+  while (ACC >= 1 / 60 && steps < 5) { update(1 / 60); ACC -= 1 / 60; steps++; }
+  if (steps === 5) ACC = 0; // drop backlog rather than spiral
+  render();
+}
+// Auto-pause on tab hide; on return, reset the time baseline and zero the
+// accumulator so no stale delta leaks into the next frame.
+if (document.addEventListener) document.addEventListener("visibilitychange", function () {
+  if (document.hidden) { if (G.state === "playing") pauseGame(); }
+  else { LAST = 0; ACC = 0; }
+});
+
+loadLevel(1);
+updateMenu();
+updateHUD();
+render();
+requestAnimationFrame(loop);
+try { window.__gameReady = true; } catch (e) {}
+
+window.__JumpQuestTest = {
+  G: G, SAVE: SAVE, startGame: startGame, crash: crash,
+  stepGame: stepGame, pauseGame: pauseGame,
+  resumeGame: resumeGame, showMenu: showMenu, toggleMute: toggleMute,
+  endTutorial: endTutorial, gameOver: gameOver, levelComplete: levelComplete,
+  loadLevel: loadLevel,
+  score: score, claimDaily: claimDaily, todayString: todayString,
+  yesterdayString: yesterdayString, formatTime: formatTime,
+  rankForScore: rankForScore, rankNextAt: rankNextAt,
+  parTimeForLevel: parTimeForLevel, timeBonusForLevel: timeBonusForLevel,
+  levelScore: levelScore, generateLevel: generateLevel,
+  makePlayer: makePlayer, physicsStep: physicsStep, jumpCut: jumpCut,
+  moveAndCollide: moveAndCollide, updatePlatforms: updatePlatforms,
+  rectsOverlap: rectsOverlap, coinHit: coinHit, spikeHit: spikeHit,
+  enemyHit: enemyHit, applyCrash: applyCrash,
+  loadSave: loadSave, saveSave: saveSave, defaultSave: defaultSave,
+  mulberry32: mulberry32, render: render, AudioSys: AudioSys,
+  update: update, setState: setState, keysDown: keysDown,
+  spawnBurst: spawnBurst, announce: announce, resizeCanvas: resizeCanvas,
+  MAX_LEVELS: MAX_LEVELS, RANKS: RANKS, W: W, H: H,
+  GRAVITY: GRAVITY, MOVE_SPEED: MOVE_SPEED, JUMP_VEL: JUMP_VEL,
+  JUMP_CUT: JUMP_CUT, COYOTE_TIME: COYOTE_TIME, JUMP_BUFFER: JUMP_BUFFER,
+  START_LIVES: START_LIVES, INVULN_TIME: INVULN_TIME,
+  COIN_SCORE: COIN_SCORE, STOMP_SCORE: STOMP_SCORE,
+  PLAYER_W: PLAYER_W, PLAYER_H: PLAYER_H, SAVE_KEY: SAVE_KEY
+};
+</script>
+</body>
+</html>
