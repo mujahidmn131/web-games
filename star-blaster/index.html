@@ -1,0 +1,1366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Star Blaster — Blast the Alien Waves, Grab Power-Ups, Beat the Boss!</title>
+<!--
+  Star Blaster — original HTML5 space shooter.
+  100% code-drawn (Canvas 2D + CSS), no images, no audio files, no
+  external resources at all. Single file, plain vanilla JS, no
+  frameworks, no SDK, no ads, no external URLs. Saves in localStorage
+  only, save key "starblaster_save_v1".
+
+  How to play: steer your cyan ship at the bottom of the screen with
+  your mouse / touch drag or the Arrow keys. Your cannon auto-fires by
+  default (toggle it off if you prefer manual fire with Space / click).
+  Blast waves of alien ships — fast drones, weaving fighters, armoured
+  tanks — and dodge their bullets. Destroyed enemies sometimes drop
+  power-ups: Spread Shot, Shield, Rapid Fire, or a rare Extra Life.
+  Consecutive kills without taking a hit raise your combo multiplier
+  up to x5. Every 5th wave is a boss wave: one big ship with a health
+  bar and spread shots. You have 3 lives; a hit costs a life and gives
+  you ~2 s of invulnerability (your ship flashes). Ranks run from
+  Rookie to Legend based on your best score. Come back daily for a
+  bonus that grows with your streak. Sounds are tiny WebAudio
+  oscillator/noise blips with a mute toggle. No audio files.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; background: #050914; overflow: hidden; }
+  body { font-family: "Trebuchet MS", "Segoe UI", Verdana, sans-serif; color: #fff;
+    display: flex; align-items: center; justify-content: center; }
+  #wrap { width: 100%; max-width: 960px; }
+  #game { position: relative; width: 100%; aspect-ratio: 960 / 600; max-height: 100vh;
+    margin: 0 auto; overflow: hidden; border-radius: 14px;
+    box-shadow: 0 18px 60px rgba(0,0,0,.6), 0 0 0 3px rgba(34,211,238,.35), 0 0 44px rgba(34,211,238,.25);
+    background: linear-gradient(180deg, #0b1530 0%, #0a0f2e 55%, #050914 100%); }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  canvas:focus-visible { outline: 3px solid #22d3ee; outline-offset: -3px; }
+  #liveRegion { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .hidden { display: none !important; }
+
+  /* HUD */
+  #hud { position: absolute; top: 0; left: 0; right: 0; display: flex; gap: 8px;
+    padding: 10px 12px 0; pointer-events: none; z-index: 5; }
+  .stat { flex: 1; background: rgba(5,9,20,.82); border: 1px solid rgba(34,211,238,.45);
+    border-radius: 12px; padding: 5px 6px 6px; text-align: center; min-width: 0;
+    box-shadow: 0 4px 12px rgba(0,0,0,.35); }
+  .stat .lbl { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #22d3ee; font-weight: 700; }
+  .stat .val { font-size: 22px; font-weight: 900; line-height: 1.1; white-space: nowrap; }
+  #hudLives .val { color: #ff6b6b; letter-spacing: 2px; }
+  #hudCombo .val { color: #ffd166; }
+  #hudCoins .val { color: #ffd166; }
+
+  /* side buttons */
+  #sideBtns { position: absolute; right: 10px; top: 74px; display: flex; flex-direction: column; gap: 8px; z-index: 6; }
+  .btn { font-family: inherit; font-weight: 800; color: #fff; border: none; cursor: pointer;
+    background: linear-gradient(180deg, #0891b2, #0e7490); border-radius: 12px;
+    padding: 12px 22px; font-size: 18px; letter-spacing: .02em;
+    box-shadow: 0 5px 0 #155e75, 0 8px 16px rgba(0,0,0,.35); text-shadow: 0 1px 2px rgba(0,0,0,.35); }
+  .btn:active { transform: translateY(4px); box-shadow: 0 1px 0 #155e75, 0 4px 8px rgba(0,0,0,.35); }
+  .btn.blue { background: linear-gradient(180deg, #3a9bdc, #1c6ea8); box-shadow: 0 5px 0 #124a72, 0 8px 16px rgba(0,0,0,.35); }
+  .btn.blue:active { box-shadow: 0 1px 0 #124a72, 0 4px 8px rgba(0,0,0,.35); }
+  .btn.green { background: linear-gradient(180deg, #3ed6a4, #1fae7d); box-shadow: 0 5px 0 #147a58, 0 8px 16px rgba(0,0,0,.35); }
+  .btn.green:active { box-shadow: 0 1px 0 #147a58, 0 4px 8px rgba(0,0,0,.35); }
+  .btn.ghost { background: rgba(5,9,20,.82); box-shadow: 0 4px 0 rgba(0,0,0,.4); border: 1px solid rgba(34,211,238,.45); }
+  .btn.small { padding: 8px 12px; font-size: 14px; border-radius: 10px; }
+  .btn:disabled { opacity: .45; cursor: default; transform: none; }
+
+  /* power-up / status chips */
+  #powerBar { position: absolute; left: 12px; top: 74px; z-index: 6; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+  .pchip { font-size: 13px; font-weight: 800; background: rgba(5,9,20,.82); border: 1px solid rgba(34,211,238,.6);
+    color: #22d3ee; border-radius: 999px; padding: 4px 12px; box-shadow: 0 4px 12px rgba(0,0,0,.35); }
+
+  /* tutorial bar — pinned near the TOP of the field (not the bottom):
+     the player ship sits at y 520, so a bottom-anchored card hid it
+     entirely on first play; up here the ship stays visible behind the
+     card and the wave banners (y 260, released only after dismiss)
+     never collide with it. */
+  #tutorialBar { position: absolute; left: 50%; top: 76px; transform: translateX(-50%);
+    width: min(92%, 640px); background: rgba(5,9,20,.94); border: 2px solid #22d3ee;
+    border-radius: 14px; padding: 12px 14px; z-index: 7; text-align: center;
+    box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+  #tutorialBar .step { font-size: 12px; color: #22d3ee; font-weight: 800; letter-spacing: .15em; }
+  #tutorialText { font-size: 18px; font-weight: 700; margin: 4px 0 10px; line-height: 1.35; }
+
+  /* overlays */
+  .overlay { position: absolute; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+    background: rgba(5,9,20,.62); backdrop-filter: blur(2px); padding: 16px; }
+  .card { width: min(94%, 560px); max-height: 96%; overflow-y: auto; text-align: center;
+    background: linear-gradient(180deg, #16224a, #050914); border: 2px solid rgba(34,211,238,.45);
+    border-radius: 20px; padding: 22px 22px 26px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+  .card h1 { font-size: 42px; font-weight: 900; letter-spacing: .02em; line-height: 1.05;
+    background: linear-gradient(180deg, #a5f3fc, #22d3ee 55%, #0891b2); -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: 0 4px 0 rgba(0,0,0,.15); }
+  .card h2 { font-size: 32px; font-weight: 900; margin-bottom: 6px; }
+  .card .sub { color: #c7d7f5; font-size: 16px; margin: 8px 0 14px; line-height: 1.45; }
+  .shipEmoji { font-size: 52px; line-height: 1; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 14px 0; }
+  .chip { background: rgba(255,255,255,.09); border: 1px solid rgba(255,255,255,.16); border-radius: 12px; padding: 8px 12px; min-width: 96px; }
+  .chip .lbl { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #22d3ee; font-weight: 700; }
+  .chip .val { font-size: 20px; font-weight: 900; }
+  .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 16px; }
+  #menuBest { color: #c7d7f5; font-size: 14px; }
+  #menuRankWrap { margin: 2px auto 0; max-width: 420px; }
+  #menuRankBarOuter { height: 10px; background: rgba(255,255,255,.12); border-radius: 999px; overflow: hidden; }
+  #menuRankBar { height: 100%; width: 0%; background: linear-gradient(90deg, #22d3ee, #f59e0b); border-radius: 999px; }
+  #menuRankNext { font-size: 13px; color: #c7d7f5; margin-top: 6px; text-align: center; }
+  .bigScore { font-size: 56px; font-weight: 900; line-height: 1; color: #ffd166;
+    text-shadow: 0 4px 0 rgba(0,0,0,.3); margin: 6px 0; }
+  #newBestBadge { display: inline-block; background: linear-gradient(180deg, #ffe29a, #ffb347); color: #5a2d00;
+    font-weight: 900; border-radius: 999px; padding: 6px 16px; font-size: 16px; margin: 6px 0;
+    box-shadow: 0 4px 14px rgba(255,180,60,.5); animation: pop .5s ease; }
+  @keyframes pop { 0% { transform: scale(.5); } 60% { transform: scale(1.15); } 100% { transform: scale(1); } }
+  .statsGrid { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 12px 0 4px; }
+  .note { font-size: 13px; color: #9db4dd; margin-top: 12px; line-height: 1.5; }
+  .powerList { text-align: left; font-size: 14px; line-height: 1.7; color: #c7d7f5; margin: 10px auto 0; max-width: 420px; }
+  .powerList b { color: #22d3ee; }
+  @media (max-width: 640px) {
+    .card h1 { font-size: 32px; } .card h2 { font-size: 26px; }
+    .stat .val { font-size: 17px; } .stat .lbl { font-size: 9px; }
+    .btn { font-size: 16px; padding: 11px 18px; }
+    #tutorialText { font-size: 15px; }
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="game">
+    <canvas id="boardCanvas" width="960" height="600" tabindex="0" aria-label="Star Blaster game. Steer the cyan ship with mouse, touch or arrow keys. Shoot the alien waves, dodge their bullets, grab power-ups."></canvas>
+    <div id="liveRegion" aria-live="polite"></div>
+
+    <div id="hud">
+      <div class="stat"><div class="lbl">Score</div><div class="val" id="hudScore">0</div></div>
+      <div class="stat"><div class="lbl">Wave</div><div class="val" id="hudWave">1</div></div>
+      <div class="stat"><div class="lbl">Kills</div><div class="val" id="hudKills">0</div></div>
+      <div class="stat" id="hudLives"><div class="lbl">Lives</div><div class="val" id="hudLivesVal">&#10084;&#10084;&#10084;</div></div>
+      <div class="stat" id="hudCombo"><div class="lbl">Combo</div><div class="val" id="hudComboVal">x1</div></div>
+      <div class="stat" id="hudCoins"><div class="lbl">Coins</div><div class="val" id="hudCoinsVal">0</div></div>
+    </div>
+
+    <div id="powerBar"></div>
+
+    <div id="sideBtns">
+      <button class="btn ghost small" id="btnPause" type="button">&#9208; Pause</button>
+      <button class="btn ghost small" id="btnSound" type="button">&#128266; Sound: On</button>
+      <button class="btn ghost small" id="btnAutoFire" type="button">&#128293; Auto-fire: On</button>
+      <button class="btn ghost small" id="btnRestart" type="button">&#8635; Restart</button>
+    </div>
+
+    <div id="tutorialBar" class="hidden">
+      <div class="step">HOW TO PLAY</div>
+      <div id="tutorialText"></div>
+      <button class="btn blue small" id="btnSkipTutorial" type="button" style="margin-top:8px;">Got it &#10005;</button>
+    </div>
+
+    <div class="overlay" id="menuOverlay">
+      <div class="card">
+        <div class="shipEmoji">&#128640;</div>
+        <h1>STAR BLASTER</h1>
+        <p class="sub">Blast the alien waves, grab power-ups, and beat the
+        boss every 5th wave. Your cannon auto-fires — just steer, dodge
+        the enemy bullets, and chain kills for combo bonuses up to x5!</p>
+        <div class="chips">
+          <div class="chip"><div class="lbl">Best Score</div><div class="val" id="menuBestScore">0</div></div>
+          <div class="chip"><div class="lbl">Rank</div><div class="val" id="menuRank">Rookie</div></div>
+          <div class="chip"><div class="lbl">Coins</div><div class="val" id="menuCoins">0</div></div>
+          <div class="chip"><div class="lbl">Daily Streak</div><div class="val" id="menuStreak">0</div></div>
+        </div>
+        <div id="menuRankWrap">
+          <div id="menuRankBarOuter"><div id="menuRankBar"></div></div>
+          <p id="menuRankNext"></p>
+        </div>
+        <p id="menuDaily" class="note"></p>
+        <div class="row"><button class="btn" id="btnPlay" type="button">&#9654; Play</button></div>
+        <p id="menuBest">Best score: 0</p>
+        <div class="powerList">
+          <b>Enemies:</b> &#128305; Drone (100 pts) &nbsp; &#128481; Fighter (150 pts) &nbsp; &#128737; Tank (300 pts)<br>
+          <b>Power-ups:</b> Spread Shot (10 s) &nbsp; Shield (12 s) &nbsp; Rapid Fire (8 s) &nbsp; Extra Life (rare)<br>
+          <b>Combo:</b> kills without taking a hit raise the multiplier (up to x5).<br>
+          <b>Boss:</b> every 5th wave — big ship, spread shots, health bar.
+        </div>
+        <p class="note">Tip: keep moving sideways — fighters aim where you
+        are, not where you will be. Grab the Shield before a boss wave.</p>
+      </div>
+    </div>
+
+    <div class="overlay hidden" id="pauseOverlay">
+      <div class="card">
+        <h2>Paused</h2>
+        <p class="sub">Take a breather — the aliens are frozen.</p>
+        <div class="chips">
+          <div class="chip"><div class="lbl">Score</div><div class="val" id="pauseScore">0</div></div>
+          <div class="chip"><div class="lbl">Wave</div><div class="val" id="pauseWave">1</div></div>
+          <div class="chip"><div class="lbl">Lives</div><div class="val" id="pauseLives">3</div></div>
+        </div>
+        <div class="row">
+          <button class="btn" id="btnResume" type="button">&#9654; Resume</button>
+          <button class="btn blue" id="btnRestartPause" type="button">&#8635; Restart</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="overlay hidden" id="resultsOverlay">
+      <div class="card">
+        <h2 id="resultsTitle">Game Over</h2>
+        <div><span id="newBestBadge" class="hidden">&#9733; NEW BEST! &#9733;</span></div>
+        <div class="bigScore" id="finalScore">0</div>
+        <p class="sub" id="resultsSub"></p>
+        <div class="statsGrid">
+          <div class="chip"><div class="lbl">Wave Reached</div><div class="val" id="finalWave">1</div></div>
+          <div class="chip"><div class="lbl">Kills</div><div class="val" id="finalKills">0</div></div>
+          <div class="chip"><div class="lbl">Coins Earned</div><div class="val" id="finalCoins">0</div></div>
+          <div class="chip"><div class="lbl">Best Combo</div><div class="val" id="finalBestCombo">x1</div></div>
+          <div class="chip"><div class="lbl">Rank</div><div class="val" id="finalRank">Rookie</div></div>
+          <div class="chip"><div class="lbl">Best Score</div><div class="val" id="finalBest">0</div></div>
+        </div>
+        <div class="row">
+          <button class="btn" id="btnRetry" type="button">&#8635; Retry</button>
+          <button class="btn blue" id="btnMenu" type="button">Menu</button>
+        </div>
+        <p class="note">Press Enter to retry instantly.</p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+"use strict";
+// __PURE_LOGIC_START__
+var SAVE_KEY = "starblaster_save_v1";
+var W = 960, H = 600;
+var PLAYER_W = 56, PLAYER_H = 44, PLAYER_Y = 520, PLAYER_SPEED = 420;
+var BULLET_W = 6, BULLET_H = 16, BULLET_SPEED = 640;
+var START_LIVES = 3, MAX_LIVES = 5, INVULN_TIME = 2;
+var COMBO_STEP = 3; // every 3 combo kills raise the multiplier by 1
+var MAX_MULTIPLIER = 5;
+var SPREAD_TIME = 10, SHIELD_TIME = 12, RAPID_TIME = 8;
+var FIRE_INTERVAL = 0.28, RAPID_INTERVAL = 0.12;
+var ENEMY_SCORES = { drone: 100, fighter: 150, tank: 300, boss: 2000 };
+var ENEMY_SPECS = {
+  drone: { hp: 1, speed: 150, w: 44, h: 36 },
+  fighter: { hp: 2, speed: 110, w: 52, h: 40 },
+  tank: { hp: 4, speed: 55, w: 64, h: 52 },
+  boss: { hp: 20, speed: 40, w: 120, h: 70 }
+};
+var RANKS = [[0, "Rookie"], [1000, "Amateur"], [3000, "Pro"],
+             [6000, "Expert"], [10000, "Master"], [15000, "Legend"]];
+
+function defaultSave() {
+  // v: save-schema version (migration ladder in loadSave). seed: PRNG seed,
+  // generated once from the clock — all gameplay randomness derives from it.
+  // best: best score. coins: lifetime coins banked.
+  // lastDaily: "YYYY-MM-DD" of the last claimed daily bonus ("" = never).
+  // autoFire: cannon auto-fires by default (manual fire: Space / click).
+  return { v: 1, seed: ((Date.now() % 2147483646) + 1), best: 0, coins: 0,
+           muted: false, tutorialSeen: false, lastDaily: "", dailyStreak: 0,
+           runs: 0, autoFire: true };
+}
+// Seeded PRNG (mulberry32) — ALL gameplay randomness comes from this, never Math.random().
+// (The single exception is the WebAudio white-noise buffer for the
+// explosion sound, which is audio noise, not gameplay randomness.)
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+// store: optional storage object ({getItem,setItem}); defaults to localStorage.
+// Tests inject a Map-backed fake; every access is try/catch-guarded.
+function loadSave(store) {
+  var s = defaultSave();
+  try {
+    var st = store || (typeof localStorage !== "undefined" ? localStorage : null);
+    if (!st) return s;
+    var raw = st.getItem(SAVE_KEY);
+    if (!raw) return s;
+    var p = JSON.parse(raw);
+    if (!p || typeof p !== "object") return s;
+    // migration ladder: v0 (no version field) -> v1: keep the fields, stamp v:1.
+    if (typeof p.v !== "number") p.v = 1;
+    if (typeof p.seed === "number" && p.seed > 0) s.seed = Math.floor(p.seed);
+    if (typeof p.best === "number") s.best = Math.max(0, Math.floor(p.best));
+    if (typeof p.coins === "number") s.coins = Math.max(0, Math.floor(p.coins));
+    if (typeof p.muted === "boolean") s.muted = p.muted;
+    if (typeof p.tutorialSeen === "boolean") s.tutorialSeen = p.tutorialSeen;
+    if (typeof p.lastDaily === "string") s.lastDaily = p.lastDaily;
+    if (typeof p.dailyStreak === "number") s.dailyStreak = Math.max(0, Math.floor(p.dailyStreak));
+    if (typeof p.runs === "number") s.runs = Math.max(0, Math.floor(p.runs));
+    if (typeof p.autoFire === "boolean") s.autoFire = p.autoFire;
+  } catch (e) { /* corrupted save -> defaults */ }
+  return s;
+}
+function saveSave(s, store) {
+  try {
+    var st = store || (typeof localStorage !== "undefined" ? localStorage : null);
+    if (!st) return false;
+    st.setItem(SAVE_KEY, JSON.stringify(s));
+    return true;
+  } catch (e) { return false; }
+}
+
+// --- ranks (by best score) ---
+function rankForScore(s) {
+  var name = RANKS[0][1];
+  for (var i = 0; i < RANKS.length; i++) if (s >= RANKS[i][0]) name = RANKS[i][1];
+  return name;
+}
+function rankNextAt(s) {
+  for (var i = 0; i < RANKS.length; i++) if (s < RANKS[i][0]) return RANKS[i][0];
+  return null; // already Legend
+}
+
+// --- scoring / combo ---
+function enemyScore(type) { return ENEMY_SCORES[type] || 0; }
+function comboMultiplier(combo) {
+  return 1 + Math.min(MAX_MULTIPLIER - 1, Math.floor(combo / COMBO_STEP));
+}
+function killScore(type, mult) { return enemyScore(type) * mult; }
+function waveClearBonus(wave) { return 100 * wave; }
+
+// --- waves ---
+function waveEnemyCount(wave) { return Math.min(6 + wave * 2, 24); }
+function isBossWave(wave) { return wave % 5 === 0; }
+function bossHp(wave) { return 20 + wave; }
+// Enemy bullets get faster with the wave: 172 px/s on wave 1, +12 per
+// wave, capped at 320 px/s (hit at wave 14).
+function bulletSpeedForWave(wave) { return Math.min(160 + wave * 12, 320); }
+function fireInterval(rapid) { return rapid ? RAPID_INTERVAL : FIRE_INTERVAL; }
+// One wave's spawn list: enemies trickle in from the top, staggered in y.
+// Type mix: drones always; fighters join from wave 2, tanks from wave 3.
+function spawnWave(rng, wave) {
+  var n = waveEnemyCount(wave);
+  var list = [];
+  for (var i = 0; i < n; i++) {
+    var r = rng();
+    var type = (wave >= 3 && r < 0.2) ? "tank" : ((wave >= 2 && r < 0.55) ? "fighter" : "drone");
+    var spec = ENEMY_SPECS[type];
+    list.push({ type: type, x: 60 + rng() * 840, y: -40 - i * 70 - rng() * 40,
+                hp: spec.hp, maxHp: spec.hp });
+  }
+  return list;
+}
+// Deterministic pattern of `count` waves for a seed (used by tests and by
+// the game, which advances the same rng wave by wave).
+function generateSpawnPattern(seed, count, wave) {
+  var rng = mulberry32(seed);
+  var waves = [];
+  for (var i = 0; i < count; i++) waves.push(spawnWave(rng, wave || 1));
+  return waves;
+}
+// Power-up drop roll on a kill: ~29% drop in total (spread 10%, shield
+// 8%, rapid 8%, extra life 3%). Extra Life is deliberately rare.
+function powerupForKill(rng) {
+  var r = rng();
+  if (r < 0.10) return "spread";
+  if (r < 0.18) return "shield";
+  if (r < 0.26) return "rapid";
+  if (r < 0.29) return "life";
+  return null;
+}
+
+// --- daily bonus (pure: takes the save + a "YYYY-MM-DD" date string) ---
+function todayString() {
+  return new Date().toISOString().slice(0, 10);
+}
+function yesterdayString(today) {
+  var d = new Date(today + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+// Claims the daily bonus into the save. Streak grows only on consecutive
+// days; a missed day resets it to 1. Reward = 50 + 50*streak, capped at 500.
+function claimDaily(save, today) {
+  if (!save || typeof save !== "object") return { claimed: false, reward: 0, streak: 0 };
+  if (save.lastDaily === today) return { claimed: false, reward: 0, streak: save.dailyStreak || 0 };
+  var streak = (save.lastDaily === yesterdayString(today)) ? (save.dailyStreak || 0) + 1 : 1;
+  var reward = Math.min(50 + 50 * streak, 500);
+  save.dailyStreak = streak;
+  save.lastDaily = today;
+  save.coins = Math.max(0, save.coins || 0) + reward;
+  return { claimed: true, reward: reward, streak: streak };
+}
+
+// --- collision helpers (rects are {x, y, w, h} centre-based; 0.8 shrink
+// keeps hits forgiving — a graze is not a hit) ---
+function rectsOverlap(a, b) {
+  var aw = a.w * 0.4, ah = a.h * 0.4, bw = b.w * 0.4, bh = b.h * 0.4;
+  return Math.abs(a.x - b.x) < aw + bw && Math.abs(a.y - b.y) < ah + bh;
+}
+// One hit: lose a life; game over when the last life is gone.
+function applyCrash(lives) {
+  var left = Math.max(0, lives - 1);
+  return { lives: left, gameOver: left <= 0 };
+}
+// __PURE_LOGIC_END__
+
+// ================= game (DOM + render + input) =================
+var canvas = document.getElementById("boardCanvas");
+var ctx = canvas.getContext("2d");
+// DPR backing store + setTransform; single uniform logical space 960x600,
+// letterboxed by the CSS aspect-ratio container (never independent X/Y scale).
+function resizeCanvas() {
+  var dpr = (window.devicePixelRatio || 1);
+  canvas.width = Math.round(960 * dpr);
+  canvas.height = Math.round(600 * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+resizeCanvas();
+if (window.addEventListener) window.addEventListener("resize", resizeCanvas);
+
+// prefers-reduced-motion gates ALL shake/particles/flash (juice is opt-in).
+var REDUCED_MOTION = false;
+try {
+  REDUCED_MOTION = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+} catch (e) { REDUCED_MOTION = false; }
+
+var SAVE = loadSave();
+// scene machine: single string, boot -> menu -> playing -> paused -> results.
+// Side effects happen on the boundary (setState), never per frame.
+function setState(s) {
+  G.state = s;
+  try { window.__state = s; } catch (e) {}
+}
+try { window.__state = "menu"; } catch (e) {}
+
+var G = {
+  state: "menu",           // menu | playing | paused | results
+  level: 1, points: 0, runCoins: 0, kills: 0,
+  lives: START_LIVES, combo: 0, bestCombo: 0,
+  player: { x: 480, y: PLAYER_Y, w: PLAYER_W, h: PLAYER_H, tilt: 0 },
+  bullets: [], enemyBullets: [], enemies: [], powerups: [],
+  stars: [], flybys: [],
+  spreadT: 0, shieldT: 0, rapidT: 0,
+  invulnT: 0, shakeT: 0, flashT: 0, fireT: 0,
+  spawnQueue: [], spawnT: 0, waveDelay: 0,
+  firing: false, prevX: 480,
+  tutorial: { active: false },
+  popups: [], particles: [], rng: mulberry32(SAVE.seed),
+  // banners deferred while the first-play tutorial is up (released by
+  // endTutorial): popups pushed before the dismiss would freeze
+  // mid-screen because the update loop does not tick under the tutorial
+  pendingWaveBanner: false, pendingDaily: null,
+  // separate visual-only rng (shake, star twinkle, particles) so visual
+  // juice never perturbs the gameplay spawn stream
+  visRng: mulberry32((SAVE.seed ^ 0x9e3779b9) >>> 0)
+};
+
+function $(id) { return document.getElementById(id); }
+function show(el, on) { el.classList.toggle("hidden", !on); }
+function announce(text) { var lr = $("liveRegion"); if (lr) lr.textContent = text; }
+function score() { return G.points; }
+function bossAlive() {
+  for (var i = 0; i < G.enemies.length; i++) if (G.enemies[i].type === "boss") return G.enemies[i];
+  return null;
+}
+// juice particles (gated behind prefers-reduced-motion); visual rng only.
+function spawnBurst(x, y, color, n) {
+  if (REDUCED_MOTION) return;
+  for (var i = 0; i < n; i++) {
+    var a = G.visRng() * Math.PI * 2, sp = 60 + G.visRng() * 220;
+    G.particles.push({ x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 80,
+                       life: 0.5 + G.visRng() * 0.4, max: 0.9, color: color, r: 3 + G.visRng() * 4 });
+  }
+}
+
+// ---------- audio (tiny WebAudio blips, no files) ----------
+var AudioSys = {
+  ctx: null, enabled: true,
+  ensure: function () {
+    if (this.ctx) return this.ctx;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      this.ctx = new AC();
+    } catch (e) { this.ctx = null; }
+    return this.ctx;
+  },
+  unlock: function () {
+    var ac = this.ensure(); if (!ac) return;
+    try { if (ac.state === "suspended") ac.resume(); } catch (e) {}
+  },
+  tone: function (freq, dur, type, vol, slideTo, delay) {
+    if (SAVE.muted) return;
+    var ac = this.ensure(); if (!ac) return;
+    try {
+      var t0 = ac.currentTime + (delay || 0);
+      var o = ac.createOscillator(), g = ac.createGain();
+      o.type = type || "sine"; o.frequency.setValueAtTime(freq, t0);
+      if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+      g.gain.setValueAtTime(vol || 0.15, t0);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+      o.connect(g); g.connect(ac.destination);
+      o.start(t0); o.stop(t0 + dur);
+    } catch (e) {}
+  },
+  noise: function (dur, vol) {
+    if (SAVE.muted) return;
+    var ac = this.ensure(); if (!ac) return;
+    try {
+      var len = Math.floor(ac.sampleRate * dur);
+      var buf = ac.createBuffer(1, len, ac.sampleRate);
+      var data = buf.getChannelData(0);
+      // NOTE: Math.random here fills an audio noise buffer only — it is
+      // not gameplay randomness (all gameplay randomness is mulberry32).
+      for (var i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      var src = ac.createBufferSource(); src.buffer = buf;
+      var f = ac.createBiquadFilter(); f.type = "bandpass"; f.frequency.value = 1200;
+      var g = ac.createGain(); g.gain.value = vol || 0.25;
+      src.connect(f); f.connect(g); g.connect(ac.destination); src.start();
+    } catch (e) {}
+  },
+  shoot: function () { this.tone(880, 0.06, "square", 0.05, 440); },
+  enemyShoot: function () { this.tone(220, 0.09, "square", 0.04, 160); },
+  explosion: function () { this.noise(0.3, 0.3); this.tone(180, 0.3, "sawtooth", 0.12, 50); },
+  powerup: function () { this.tone(660, 0.08, "sine", 0.15); this.tone(990, 0.12, "sine", 0.15, 0, 0.07); },
+  hit: function () { this.noise(0.25, 0.35); this.tone(220, 0.4, "sawtooth", 0.15, 60); },
+  waveClear: function () {
+    this.tone(523, 0.12, "sine", 0.15);
+    this.tone(659, 0.12, "sine", 0.15, 0, 0.11);
+    this.tone(784, 0.12, "sine", 0.15, 0, 0.22);
+    this.tone(1046, 0.25, "sine", 0.15, 0, 0.33);
+  },
+  click: function () { this.tone(660, 0.06, "sine", 0.1); }
+};
+
+// ---------- save / menu ----------
+function persistSave() { saveSave(SAVE); }
+function updateMenu() {
+  $("menuBestScore").textContent = String(SAVE.best);
+  $("menuRank").textContent = rankForScore(SAVE.best);
+  $("menuCoins").textContent = String(SAVE.coins);
+  $("menuStreak").textContent = String(SAVE.dailyStreak);
+  $("menuBest").textContent = "Best score: " + SAVE.best + " — " + rankForScore(SAVE.best);
+  // rank progress: how far to the next rank, as a bar + a line of text
+  var next = rankNextAt(SAVE.best);
+  var bar = $("menuRankBar"), nxt = $("menuRankNext");
+  if (bar) bar.style.width = (next === null ? 100 : Math.min(100, Math.floor(SAVE.best / next * 100))) + "%";
+  if (nxt) {
+    nxt.textContent = next === null
+      ? "Legend — the top rank. Now chase a bigger score!"
+      : (next - SAVE.best) + " pts to " + rankForScore(next) + " — best " + SAVE.best;
+  }
+  // daily bonus hint: claimed today, or waiting on the first run
+  var daily = $("menuDaily");
+  if (daily) {
+    daily.textContent = SAVE.lastDaily === todayString()
+      ? "Daily bonus claimed — come back tomorrow for the next one!"
+      : "\uD83C\uDF81 Daily bonus waiting — your first run today claims +50–500 coins!";
+  }
+}
+function showMenu() {
+  setState("menu");
+  show($("resultsOverlay"), false);
+  show($("pauseOverlay"), false);
+  show($("tutorialBar"), false);
+  show($("menuOverlay"), true);
+  updateMenu();
+  updateHUD();
+}
+function toggleMute() {
+  SAVE.muted = !SAVE.muted;
+  persistSave();
+  $("btnSound").textContent = SAVE.muted ? "\uD83D\uDD07 Sound: Off" : "\uD83D\uDD0A Sound: On";
+  return SAVE.muted;
+}
+function toggleAutoFire() {
+  SAVE.autoFire = !SAVE.autoFire;
+  persistSave();
+  $("btnAutoFire").textContent = SAVE.autoFire ? "\uD83D\uDD25 Auto-fire: On" : "\uD83D\uDD25 Auto-fire: Off";
+  return SAVE.autoFire;
+}
+
+// ---------- tutorial (single hint on first play) ----------
+function startTutorial() {
+  G.tutorial.active = true;
+  $("tutorialText").textContent =
+    "Steer your cyan ship with your mouse / touch drag or the Arrow keys. Your cannon auto-fires — blast the alien ships and dodge their bullets! Grab falling power-ups: Spread Shot, Shield, Rapid Fire, Extra Life.";
+  show($("tutorialBar"), true);
+}
+function endTutorial() {
+  if (!G.tutorial.active) return;
+  G.tutorial.active = false;
+  SAVE.tutorialSeen = true;
+  persistSave();
+  show($("tutorialBar"), false);
+  // Release the banners deferred by startGame: the player can finally
+  // see them animate instead of finding them frozen on screen.
+  if (G.pendingWaveBanner) {
+    G.pendingWaveBanner = false;
+    G.popups.push({ x: W / 2, y: 260, text: "WAVE 1",
+                    life: 1.6, max: 1.6, big: true });
+    announce("Wave 1.");
+  }
+  if (G.pendingDaily) {
+    G.popups.push({ x: W / 2, y: 300, text: "DAILY BONUS +" + G.pendingDaily.reward + " COINS!",
+                    life: 2, max: 2 });
+    announce("Daily bonus claimed: " + G.pendingDaily.reward + " coins, streak " + G.pendingDaily.streak + ".");
+    G.pendingDaily = null;
+  }
+}
+
+// ---------- starfield / menu attract ----------
+function makeStars() {
+  var stars = [];
+  for (var i = 0; i < 90; i++) {
+    stars.push({ x: G.rng() * W, y: G.rng() * H, s: 1 + G.rng() * 2,
+                 tw: G.rng() * Math.PI * 2, sp: 12 + G.rng() * 40 });
+  }
+  return stars;
+}
+function scrollStars(dt, speed) {
+  for (var i = 0; i < G.stars.length; i++) {
+    var st = G.stars[i];
+    st.y += st.sp * speed * dt;
+    st.tw += dt * 3;
+    if (st.y > H + 4) { st.y = -4; st.x = G.visRng() * W; }
+  }
+}
+// Menu attract mode: enemy ships drift down behind the title screen.
+function spawnFlyby() {
+  var types = ["drone", "fighter", "tank"];
+  var type = types[Math.floor(G.visRng() * types.length)];
+  var spec = ENEMY_SPECS[type];
+  G.flybys.push({ type: type, x: 80 + G.visRng() * 800, y: -60,
+                  w: spec.w, h: spec.h, speed: 40 + G.visRng() * 40 });
+}
+function scrollFlybys(dt) {
+  for (var i = G.flybys.length - 1; i >= 0; i--) {
+    G.flybys[i].y += G.flybys[i].speed * dt;
+    if (G.flybys[i].y > H + 60) G.flybys.splice(i, 1);
+  }
+  if (G.flybys.length < 3 && G.visRng() < 0.02) spawnFlyby();
+}
+
+// ---------- game flow ----------
+// quiet=true skips the wave banner: used for wave 1 while the first-play
+// tutorial is up (the banner would freeze mid-screen otherwise; it is
+// released by endTutorial() when the player dismisses the bar).
+function startWave(n, quiet) {
+  G.level = n;
+  G.spawnQueue = [];
+  G.spawnT = 0;
+  G.waveDelay = 0;
+  if (isBossWave(n)) {
+    var hp = bossHp(n);
+    G.enemies.push({ type: "boss", x: W / 2, y: 90, w: ENEMY_SPECS.boss.w, h: ENEMY_SPECS.boss.h,
+                     hp: hp, maxHp: hp, speed: ENEMY_SPECS.boss.speed,
+                     baseX: W / 2, phase: 0, t: 0, shootT: 2, flashT: 0 });
+    // a few drones escort the boss
+    var escorts = spawnWave(G.rng, 1).slice(0, 4);
+    for (var i = 0; i < escorts.length; i++) G.spawnQueue.push(escorts[i]);
+    if (!quiet) {
+      G.popups.push({ x: W / 2, y: 260, text: "\u26A0 BOSS WAVE " + n + " \u26A0",
+                      life: 2, max: 2, big: true });
+      announce("Warning! Boss wave " + n + ".");
+    }
+  } else {
+    G.spawnQueue = spawnWave(G.rng, n);
+    if (!quiet) {
+      G.popups.push({ x: W / 2, y: 260, text: "WAVE " + n,
+                      life: 1.6, max: 1.6, big: true });
+      announce("Wave " + n + ".");
+    }
+  }
+}
+function startGame() {
+  G.level = 1; G.points = 0; G.runCoins = 0; G.kills = 0;
+  G.lives = START_LIVES; G.combo = 0; G.bestCombo = 0;
+  G.player.x = 480; G.player.y = PLAYER_Y; G.player.tilt = 0;
+  G.prevX = G.player.x;
+  G.bullets = []; G.enemyBullets = []; G.enemies = []; G.powerups = [];
+  G.popups = []; G.particles = []; G.flybys = [];
+  G.spreadT = 0; G.shieldT = 0; G.rapidT = 0;
+  G.invulnT = 0; G.shakeT = 0; G.flashT = 0; G.fireT = 0;
+  G.firing = false;
+  // Each run re-seeds from save.seed + run count, so every run has a
+  // different (but fully seeded, reproducible) spawn pattern.
+  G.rng = mulberry32((SAVE.seed + (SAVE.runs || 0)) >>> 0);
+  SAVE.runs = (SAVE.runs || 0) + 1;
+  G.stars = makeStars();
+  // daily bonus is claimed once per day, on the first run of the day
+  // (the claim itself happens before persistSave). The Wave 1 + daily
+  // banners are DEFERRED while the first-play tutorial is up — popups
+  // pushed now would freeze mid-screen (the update loop does not tick
+  // under the tutorial bar) and stack on top of each other. They are
+  // released by endTutorial() when the player dismisses the bar.
+  var daily = claimDaily(SAVE, todayString());
+  persistSave();
+  setState("playing");
+  show($("menuOverlay"), false);
+  show($("resultsOverlay"), false);
+  show($("pauseOverlay"), false);
+  show($("tutorialBar"), false);
+  G.pendingWaveBanner = !SAVE.tutorialSeen;
+  G.pendingDaily = null;
+  startWave(1, G.pendingWaveBanner);
+  if (daily.claimed) {
+    if (SAVE.tutorialSeen) {
+      G.popups.push({ x: W / 2, y: 300, text: "DAILY BONUS +" + daily.reward + " COINS!",
+                      life: 2, max: 2 });
+      announce("Daily bonus claimed: " + daily.reward + " coins, streak " + daily.streak + ".");
+    } else {
+      G.pendingDaily = { reward: daily.reward, streak: daily.streak };
+    }
+  }
+  if (!SAVE.tutorialSeen) startTutorial();
+  updateHUD();
+}
+function crash() {
+  var res = applyCrash(G.lives);
+  G.lives = res.lives;
+  G.combo = 0;
+  G.invulnT = INVULN_TIME;
+  if (!REDUCED_MOTION) G.shakeT = 0.35;
+  if (!REDUCED_MOTION) G.flashT = 0.35;
+  spawnBurst(G.player.x, G.player.y, "#ff6b6b", 18);
+  AudioSys.hit();
+  announce("Hit! " + G.lives + " lives left.");
+  if (res.gameOver) { gameOver(); return; }
+  updateHUD();
+}
+// A hit on the player: the Shield eats one free hit, invulnerability
+// eats the rest, otherwise a life is lost.
+function hitPlayer() {
+  if (G.invulnT > 0 || G.state !== "playing") return;
+  if (G.shieldT > 0) {
+    G.shieldT = 0;
+    G.invulnT = 1;
+    G.popups.push({ x: G.player.x, y: G.player.y - 60, text: "SHIELD SAVED YOU!",
+                    life: 1.2, max: 1.2 });
+    spawnBurst(G.player.x, G.player.y, "#22d3ee", 14);
+    announce("Shield absorbed the hit!");
+    updateHUD();
+    return;
+  }
+  crash();
+}
+function gameOver() {
+  setState("results");
+  var isBest = score() > SAVE.best;
+  if (isBest) SAVE.best = score();
+  SAVE.coins += G.runCoins;
+  persistSave();
+  $("resultsTitle").textContent = "Game Over";
+  $("finalScore").textContent = String(score());
+  $("finalWave").textContent = String(G.level);
+  $("finalKills").textContent = String(G.kills);
+  $("finalCoins").textContent = String(G.runCoins);
+  $("finalBestCombo").textContent = "x" + comboMultiplier(G.bestCombo);
+  $("finalRank").textContent = rankForScore(SAVE.best);
+  $("finalBest").textContent = String(SAVE.best);
+  var next = rankNextAt(SAVE.best);
+  $("resultsSub").textContent = next === null
+    ? "Legend! You have reached the top rank — now chase a bigger score."
+    : "You scored " + score() + " on wave " + G.level + ". " + (next - SAVE.best) + " pts more to reach " + rankForScore(next) + "!";
+  show($("newBestBadge"), isBest && score() > 0);
+  show($("resultsOverlay"), true);
+  show($("tutorialBar"), false);
+  announce("Game over. Score " + score() + ", wave " + G.level + ", best " + SAVE.best + ".");
+  updateHUD();
+}
+function pauseGame() {
+  if (G.state !== "playing") return;
+  setState("paused");
+  $("pauseScore").textContent = String(score());
+  $("pauseWave").textContent = String(G.level);
+  $("pauseLives").textContent = String(G.lives);
+  show($("pauseOverlay"), true);
+  show($("tutorialBar"), false); // never leave the hint card floating behind the pause card
+}
+function resumeGame() {
+  if (G.state !== "paused") return;
+  setState("playing");
+  show($("pauseOverlay"), false);
+  if (G.tutorial.active) show($("tutorialBar"), true);
+}
+
+// ---------- shooting / kills ----------
+function fireBullet() {
+  var p = G.player;
+  var shots = G.spreadT > 0 ? [-0.22, 0, 0.22] : [0];
+  for (var i = 0; i < shots.length; i++) {
+    G.bullets.push({ x: p.x, y: p.y - PLAYER_H / 2, vx: Math.sin(shots[i]) * BULLET_SPEED,
+                     vy: -Math.cos(shots[i]) * BULLET_SPEED, w: BULLET_W, h: BULLET_H });
+  }
+  AudioSys.shoot();
+}
+function enemyShoot(e) {
+  var spd = bulletSpeedForWave(G.level);
+  if (e.type === "boss") {
+    // boss spread: 5 bullets fanning down
+    for (var i = -2; i <= 2; i++) {
+      G.enemyBullets.push({ x: e.x, y: e.y + e.h / 2, vx: i * 90, vy: spd, w: 8, h: 14 });
+    }
+    AudioSys.enemyShoot();
+    return;
+  }
+  // fighters and tanks aim at the player's current position
+  var dx = G.player.x - e.x, dy = G.player.y - e.y;
+  var len = Math.sqrt(dx * dx + dy * dy) || 1;
+  G.enemyBullets.push({ x: e.x, y: e.y + e.h / 2, vx: dx / len * spd, vy: dy / len * spd, w: 8, h: 14 });
+  AudioSys.enemyShoot();
+}
+function killEnemy(idx) {
+  var e = G.enemies[idx];
+  G.enemies.splice(idx, 1);
+  G.kills++;
+  G.combo++;
+  if (G.combo > G.bestCombo) G.bestCombo = G.combo;
+  var mult = comboMultiplier(G.combo);
+  var pts = killScore(e.type, mult);
+  G.points += pts;
+  G.runCoins += 10;
+  G.popups.push({ x: e.x, y: e.y, text: "+" + pts + (mult > 1 ? " (x" + mult + ")" : ""),
+                  life: 1, max: 1 });
+  spawnBurst(e.x, e.y, e.type === "boss" ? "#f59e0b" : "#fb923c", e.type === "boss" ? 30 : 12);
+  AudioSys.explosion();
+  if (e.type === "boss") {
+    G.popups.push({ x: W / 2, y: 260, text: "BOSS DOWN! +" + pts, life: 1.8, max: 1.8, big: true });
+    announce("Boss destroyed! +" + pts + " points.");
+  }
+  // power-up drop roll (seeded)
+  var drop = powerupForKill(G.rng);
+  if (drop) G.powerups.push({ x: e.x, y: e.y, kind: drop, w: 30, h: 30 });
+  updateHUD();
+}
+function applyPowerup(kind) {
+  if (kind === "spread") {
+    G.spreadT = SPREAD_TIME;
+    G.popups.push({ x: G.player.x, y: G.player.y - 60, text: "SPREAD SHOT!", life: 1.2, max: 1.2 });
+  } else if (kind === "shield") {
+    G.shieldT = SHIELD_TIME;
+    G.popups.push({ x: G.player.x, y: G.player.y - 60, text: "SHIELD UP!", life: 1.2, max: 1.2 });
+  } else if (kind === "rapid") {
+    G.rapidT = RAPID_TIME;
+    G.popups.push({ x: G.player.x, y: G.player.y - 60, text: "RAPID FIRE!", life: 1.2, max: 1.2 });
+  } else if (kind === "life") {
+    G.lives = Math.min(G.lives + 1, MAX_LIVES);
+    G.popups.push({ x: G.player.x, y: G.player.y - 60, text: "EXTRA LIFE!", life: 1.2, max: 1.2 });
+  }
+  AudioSys.powerup();
+  announce("Power-up: " + kind + ".");
+  updateHUD();
+}
+
+// ---------- per-frame step ----------
+// The tutorial freezes ALL gameplay while the How-to-Play bar is up:
+// no spawning, no motion, no timer ticks (the bar is dismissed by the
+// "Got it" button, a pointer tap, or an arrow-key steer). The render
+// loop keeps drawing behind the bar.
+function stepGame(dt) {
+  if (G.state !== "playing") return;
+  if (G.tutorial.active) return;
+  // timers
+  if (G.spreadT > 0) { G.spreadT -= dt; if (G.spreadT < 0) G.spreadT = 0; }
+  if (G.shieldT > 0) { G.shieldT -= dt; if (G.shieldT < 0) G.shieldT = 0; }
+  if (G.rapidT > 0) { G.rapidT -= dt; if (G.rapidT < 0) G.rapidT = 0; }
+  if (G.invulnT > 0) { G.invulnT -= dt; if (G.invulnT < 0) G.invulnT = 0; }
+  if (G.shakeT > 0) { G.shakeT -= dt; if (G.shakeT < 0) G.shakeT = 0; }
+  if (G.flashT > 0) { G.flashT -= dt; if (G.flashT < 0) G.flashT = 0; }
+  // starfield scrolls with the action
+  scrollStars(dt, 2.5);
+  // keyboard steering (keys held in a Set, read inside update())
+  var move = 0;
+  if (keysDown["ArrowLeft"]) move -= 1;
+  if (keysDown["ArrowRight"]) move += 1;
+  if (keysDown["ArrowUp"]) G.player.y -= PLAYER_SPEED * 0.7 * dt;
+  if (keysDown["ArrowDown"]) G.player.y += PLAYER_SPEED * 0.7 * dt;
+  if (move !== 0) G.player.x += move * PLAYER_SPEED * dt;
+  G.player.x = Math.max(PLAYER_W / 2 + 8, Math.min(W - PLAYER_W / 2 - 8, G.player.x));
+  G.player.y = Math.max(320, Math.min(H - PLAYER_H / 2 - 8, G.player.y));
+  // the ship banks into the steering (visual only — no effect on collision)
+  var vx = (G.player.x - G.prevX) / Math.max(dt, 0.001);
+  G.prevX = G.player.x;
+  var tiltTarget = Math.max(-0.22, Math.min(0.22, vx * 0.0006));
+  G.player.tilt += (tiltTarget - G.player.tilt) * Math.min(1, dt * 10);
+  // firing: auto-fire on by default; Space / held pointer also fires
+  G.fireT -= dt;
+  if ((SAVE.autoFire || G.firing || keysDown[" "]) && G.fireT <= 0) {
+    fireBullet();
+    G.fireT = fireInterval(G.rapidT > 0);
+  }
+  // spawn queue: one enemy every 0.55 s so waves trickle in
+  if (G.spawnQueue.length > 0) {
+    G.spawnT -= dt;
+    if (G.spawnT <= 0) {
+      var s = G.spawnQueue.shift();
+      var spec = ENEMY_SPECS[s.type];
+      G.enemies.push({ type: s.type, x: s.x, y: s.y, w: spec.w, h: spec.h,
+                       hp: s.hp, maxHp: s.maxHp, speed: spec.speed,
+                       baseX: s.x, phase: G.rng() * Math.PI * 2, t: 0,
+                       shootT: 1.2 + G.rng() * 1.2, flashT: 0 });
+      G.spawnT = 0.55;
+    }
+  }
+  // particles + popups
+  for (var pi = G.particles.length - 1; pi >= 0; pi--) {
+    var pt = G.particles[pi];
+    pt.x += pt.vx * dt; pt.y += pt.vy * dt; pt.life -= dt;
+    if (pt.life <= 0) G.particles.splice(pi, 1);
+  }
+  for (var i = G.popups.length - 1; i >= 0; i--) {
+    G.popups[i].life -= dt;
+    if (G.popups[i].life <= 0) G.popups.splice(i, 1);
+  }
+  // enemies: drones dive, fighters weave, tanks crawl then hover and shoot
+  for (var ei = G.enemies.length - 1; ei >= 0; ei--) {
+    var e = G.enemies[ei];
+    e.t += dt;
+    if (e.flashT > 0) e.flashT -= dt;
+    if (e.type === "drone") {
+      e.y += e.speed * dt;
+      e.x += (G.player.x - e.x) * 0.25 * dt;
+    } else if (e.type === "fighter") {
+      e.y += e.speed * 0.6 * dt;
+      e.x = e.baseX + Math.sin(e.t * 2 + e.phase) * 60;
+      e.x = Math.max(30, Math.min(W - 30, e.x));
+    } else if (e.type === "tank") {
+      if (e.y < 140) e.y += e.speed * dt;
+      else e.x = e.baseX + Math.sin(e.t * 0.8 + e.phase) * 40;
+    } else if (e.type === "boss") {
+      e.x = e.baseX + Math.sin(e.t * 0.7) * 260;
+      e.y = 90 + Math.sin(e.t * 1.3) * 18;
+    }
+    // enemy shooting (only once on screen, and only fighters/tanks/boss)
+    if (e.y > 0 && e.type !== "drone") {
+      e.shootT -= dt;
+      if (e.shootT <= 0) {
+        enemyShoot(e);
+        e.shootT = e.type === "boss" ? 1.6 : (e.type === "tank" ? 2.8 : 2.2);
+      }
+    }
+    if (e.y - e.h > H + 40) { G.enemies.splice(ei, 1); continue; }
+    // enemy rams the player: enemy dies, player takes a hit
+    if (rectsOverlap(G.player, e)) {
+      G.enemies.splice(ei, 1);
+      spawnBurst(e.x, e.y, "#fb923c", 10);
+      hitPlayer();
+      if (G.state !== "playing") { updateHUD(); return; }
+      continue;
+    }
+  }
+  // player bullets fly up; a hit chips enemy HP, a kill pays out
+  for (var bi = G.bullets.length - 1; bi >= 0; bi--) {
+    var b = G.bullets[bi];
+    b.x += b.vx * dt; b.y += b.vy * dt;
+    if (b.y < -30 || b.x < -20 || b.x > W + 20) { G.bullets.splice(bi, 1); continue; }
+    var hit = false;
+    for (var ej = G.enemies.length - 1; ej >= 0; ej--) {
+      var en = G.enemies[ej];
+      if (Math.abs(b.x - en.x) < (b.w + en.w) * 0.4 && Math.abs(b.y - en.y) < (b.h + en.h) * 0.4) {
+        en.hp -= 1;
+        en.flashT = 0.08;
+        spawnBurst(b.x, b.y, "#fde68a", 3);
+        if (en.hp <= 0) killEnemy(ej);
+        hit = true;
+        break;
+      }
+    }
+    if (hit) G.bullets.splice(bi, 1);
+  }
+  // enemy bullets fly down; one hit on the player (shield/invuln apply)
+  for (var qi = G.enemyBullets.length - 1; qi >= 0; qi--) {
+    var eb = G.enemyBullets[qi];
+    eb.x += eb.vx * dt; eb.y += eb.vy * dt;
+    if (eb.y > H + 20 || eb.x < -20 || eb.x > W + 20) { G.enemyBullets.splice(qi, 1); continue; }
+    if (rectsOverlap(G.player, eb)) {
+      G.enemyBullets.splice(qi, 1);
+      hitPlayer();
+      if (G.state !== "playing") { updateHUD(); return; }
+    }
+  }
+  // power-ups fall slowly and are collected on touch
+  for (var ui = G.powerups.length - 1; ui >= 0; ui--) {
+    var pw = G.powerups[ui];
+    pw.y += 90 * dt;
+    if (pw.y > H + 20) { G.powerups.splice(ui, 1); continue; }
+    if (rectsOverlap(G.player, pw)) {
+      G.powerups.splice(ui, 1);
+      applyPowerup(pw.kind);
+    }
+  }
+  // wave clear: queue empty and no enemies left -> bonus + next wave
+  if (G.spawnQueue.length === 0 && G.enemies.length === 0) {
+    if (G.waveDelay <= 0) {
+      var bonus = waveClearBonus(G.level);
+      G.points += bonus;
+      G.popups.push({ x: W / 2, y: 300, text: "WAVE " + G.level + " CLEAR! +" + bonus,
+                      life: 1.6, max: 1.6, big: true });
+      AudioSys.waveClear();
+      announce("Wave " + G.level + " clear! Bonus " + bonus + " points.");
+      G.waveDelay = 1.4;
+    } else {
+      G.waveDelay -= dt;
+      if (G.waveDelay <= 0) startWave(G.level + 1);
+    }
+  }
+  updateHUD();
+}
+function updateHUD() {
+  $("hudScore").textContent = String(score());
+  $("hudWave").textContent = String(G.level);
+  $("hudKills").textContent = String(G.kills);
+  var hearts = "";
+  for (var i = 0; i < G.lives; i++) hearts += "\u2764";
+  $("hudLivesVal").textContent = hearts || "\u2014";
+  $("hudComboVal").textContent = "x" + comboMultiplier(G.combo);
+  $("hudCoinsVal").textContent = String(G.runCoins);
+  var bar = $("powerBar");
+  var html = "";
+  if (G.spreadT > 0) html += '<div class="pchip">SPREAD ' + Math.ceil(G.spreadT) + 's</div>';
+  if (G.shieldT > 0) html += '<div class="pchip">SHIELD ' + Math.ceil(G.shieldT) + 's</div>';
+  if (G.rapidT > 0) html += '<div class="pchip">RAPID ' + Math.ceil(G.rapidT) + 's</div>';
+  if (G.invulnT > 0) html += '<div class="pchip">INVULNERABLE ' + Math.ceil(G.invulnT) + 's</div>';
+  bar.innerHTML = html;
+}
+
+// ---------- input ----------
+// Pointer: the ship follows the pointer (mouse hover or touch drag);
+// holding the pointer also fires the cannon manually.
+function canvasPos(e) {
+  var r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * 960 / r.width, y: (e.clientY - r.top) * 600 / r.height };
+}
+function steerTo(x, y) {
+  G.player.x = Math.max(PLAYER_W / 2 + 8, Math.min(W - PLAYER_W / 2 - 8, x));
+  if (y !== undefined) G.player.y = Math.max(320, Math.min(H - PLAYER_H / 2 - 8, y));
+}
+function onPointerMove(e) {
+  if (G.state !== "playing") return;
+  AudioSys.unlock();
+  var p = canvasPos(e);
+  steerTo(p.x, p.y);
+  if (e.preventDefault) e.preventDefault();
+}
+function onPointerDown(e) {
+  if (G.state !== "playing") return;
+  AudioSys.unlock(); // first gesture unlocks/resumes audio
+  var p = canvasPos(e);
+  steerTo(p.x, p.y);
+  G.firing = true;
+  if (G.tutorial.active) endTutorial();
+  if (e.preventDefault) e.preventDefault();
+}
+function onPointerUp() { G.firing = false; }
+canvas.addEventListener("pointermove", onPointerMove);
+canvas.addEventListener("pointerdown", onPointerDown);
+canvas.addEventListener("pointerup", onPointerUp);
+canvas.addEventListener("pointercancel", onPointerUp);
+
+// Keyboard: keys held in a Set, read inside update() — handlers never act directly.
+var keysDown = {};
+if (typeof window !== "undefined" && window.addEventListener) {
+  window.addEventListener("keydown", function (e) { keysDown[e.key] = true; });
+  window.addEventListener("keyup", function (e) { delete keysDown[e.key]; });
+}
+function handleKeys() {
+  // Space / Enter only start / retry / resume when NOT playing; while
+  // playing, Space is the manual-fire key (read in stepGame).
+  if (G.state !== "playing" && (keysDown[" "] || keysDown["Enter"])) {
+    delete keysDown[" "]; delete keysDown["Enter"];
+    if (G.state === "menu") startGame();
+    else if (G.state === "results") startGame();
+    else if (G.state === "paused") resumeGame();
+  }
+  if (keysDown["p"] || keysDown["P"]) {
+    delete keysDown["p"]; delete keysDown["P"];
+    if (G.state === "playing") pauseGame();
+    else if (G.state === "paused") resumeGame();
+  }
+  if ((keysDown["ArrowLeft"] || keysDown["ArrowRight"] || keysDown["ArrowUp"] || keysDown["ArrowDown"]) && G.tutorial.active) endTutorial();
+}
+// update() mutates state only; render() draws only.
+function update(dt) {
+  handleKeys();
+  if (G.state === "menu") {
+    // attract mode: the starfield drifts and enemy ships fly by behind
+    // the title screen, so the menu feels alive.
+    scrollStars(dt, 1);
+    scrollFlybys(dt);
+  }
+  stepGame(dt);
+}
+
+// ---------- buttons ----------
+$("btnPlay").addEventListener("click", function () { AudioSys.click(); startGame(); });
+$("btnRetry").addEventListener("click", function () { AudioSys.click(); startGame(); });
+$("btnMenu").addEventListener("click", function () { AudioSys.click(); showMenu(); });
+$("btnPause").addEventListener("click", function () { AudioSys.click(); pauseGame(); });
+$("btnResume").addEventListener("click", function () { AudioSys.click(); resumeGame(); });
+$("btnRestart").addEventListener("click", function () { AudioSys.click(); if (G.state === "playing" || G.state === "paused") startGame(); });
+$("btnRestartPause").addEventListener("click", function () { AudioSys.click(); startGame(); });
+$("btnSound").addEventListener("click", function () { toggleMute(); });
+$("btnAutoFire").addEventListener("click", function () { toggleAutoFire(); });
+$("btnSkipTutorial").addEventListener("click", function () { endTutorial(); });
+if (SAVE.muted) $("btnSound").textContent = "\uD83D\uDD07 Sound: Off";
+if (!SAVE.autoFire) $("btnAutoFire").textContent = "\uD83D\uDD25 Auto-fire: Off";
+
+// ---------- render ----------
+function drawPlayerShip() {
+  var p = G.player;
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  if (p.tilt) ctx.rotate(p.tilt);
+  // engine flame
+  if (!REDUCED_MOTION) {
+    ctx.fillStyle = "#f59e0b";
+    ctx.beginPath();
+    ctx.moveTo(-8, PLAYER_H / 2);
+    ctx.lineTo(0, PLAYER_H / 2 + 16 + G.visRng() * 8);
+    ctx.lineTo(8, PLAYER_H / 2);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#fde68a";
+    ctx.beginPath();
+    ctx.moveTo(-4, PLAYER_H / 2);
+    ctx.lineTo(0, PLAYER_H / 2 + 9 + G.visRng() * 5);
+    ctx.lineTo(4, PLAYER_H / 2);
+    ctx.closePath(); ctx.fill();
+  }
+  // wings
+  ctx.fillStyle = "#0e7490";
+  ctx.beginPath();
+  ctx.moveTo(-PLAYER_W / 2, 12); ctx.lineTo(-10, -4); ctx.lineTo(-10, 14); ctx.closePath(); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(PLAYER_W / 2, 12); ctx.lineTo(10, -4); ctx.lineTo(10, 14); ctx.closePath(); ctx.fill();
+  // hull
+  ctx.fillStyle = "#22d3ee";
+  ctx.beginPath();
+  ctx.moveTo(0, -PLAYER_H / 2);
+  ctx.lineTo(12, 6); ctx.lineTo(10, PLAYER_H / 2 - 4);
+  ctx.lineTo(-10, PLAYER_H / 2 - 4); ctx.lineTo(-12, 6);
+  ctx.closePath(); ctx.fill();
+  // cockpit
+  ctx.fillStyle = "#ecfeff";
+  ctx.beginPath(); ctx.arc(0, -6, 6, 0, Math.PI * 2); ctx.fill();
+  // stripe
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(-2, -8, 4, 22);
+  ctx.restore();
+  // shield ring
+  if (G.shieldT > 0) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(34,211,238,0.8)";
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 44, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+}
+function drawEnemy(e) {
+  ctx.save();
+  ctx.translate(e.x, e.y);
+  var flash = e.flashT > 0;
+  if (e.type === "drone") {
+    ctx.fillStyle = flash ? "#ffffff" : "#f97316";
+    ctx.beginPath();
+    ctx.moveTo(0, e.h / 2); ctx.lineTo(e.w / 2, -e.h / 2); ctx.lineTo(-e.w / 2, -e.h / 2);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#7c2d12";
+    ctx.beginPath(); ctx.arc(0, 2, 6, 0, Math.PI * 2); ctx.fill();
+  } else if (e.type === "fighter") {
+    ctx.fillStyle = flash ? "#ffffff" : "#ef4444";
+    ctx.beginPath();
+    ctx.moveTo(0, e.h / 2); ctx.lineTo(e.w / 2, -6); ctx.lineTo(10, -e.h / 2);
+    ctx.lineTo(-10, -e.h / 2); ctx.lineTo(-e.w / 2, -6);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#fca5a5";
+    ctx.fillRect(-3, -e.h / 2 + 4, 6, 12);
+  } else if (e.type === "tank") {
+    ctx.fillStyle = flash ? "#ffffff" : "#b91c1c";
+    ctx.fillRect(-e.w / 2, -e.h / 2, e.w, e.h);
+    ctx.fillStyle = "#7f1d1d";
+    ctx.fillRect(-e.w / 2 + 6, -e.h / 2 + 6, e.w - 12, 10);
+    ctx.fillStyle = "#fca5a5";
+    ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#450a0a";
+    ctx.fillRect(-4, e.h / 2 - 12, 8, 10);
+  } else if (e.type === "boss") {
+    ctx.fillStyle = flash ? "#ffffff" : "#991b1b";
+    ctx.beginPath();
+    ctx.moveTo(0, e.h / 2); ctx.lineTo(e.w / 2, 0); ctx.lineTo(e.w / 2 - 14, -e.h / 2);
+    ctx.lineTo(-e.w / 2 + 14, -e.h / 2); ctx.lineTo(-e.w / 2, 0);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#f59e0b";
+    ctx.fillRect(-e.w / 2 + 12, -e.h / 2 + 8, e.w - 24, 10);
+    ctx.fillStyle = "#fca5a5";
+    ctx.beginPath(); ctx.arc(-20, 6, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(20, 6, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(0, 14, 9, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+function drawPowerup(pw) {
+  ctx.save();
+  ctx.translate(pw.x, pw.y);
+  var col = pw.kind === "spread" ? "#22d3ee" : pw.kind === "shield" ? "#3b82f6" :
+            pw.kind === "rapid" ? "#f59e0b" : "#ef4444";
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.arc(0, 0, 15, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#050914";
+  ctx.font = "900 16px 'Trebuchet MS', Verdana, sans-serif";
+  ctx.textAlign = "center";
+  var label = pw.kind === "spread" ? "S" : pw.kind === "shield" ? "H" :
+              pw.kind === "rapid" ? "R" : "+";
+  ctx.fillText(label, 0, 6);
+  ctx.restore();
+}
+function render() {
+  var shX = 0, shY = 0;
+  if (G.shakeT > 0 && !REDUCED_MOTION) {
+    shX = (G.visRng() - 0.5) * 14;
+    shY = (G.visRng() - 0.5) * 14;
+  }
+  ctx.save();
+  ctx.translate(shX, shY);
+  // deep-space background
+  var sky = ctx.createLinearGradient(0, 0, 0, 600);
+  sky.addColorStop(0, "#0b1530");
+  sky.addColorStop(0.55, "#0a0f2e");
+  sky.addColorStop(1, "#050914");
+  ctx.fillStyle = sky; ctx.fillRect(-20, -20, 1000, 640);
+  // distant planet
+  ctx.fillStyle = "#1e3a5f";
+  ctx.beginPath(); ctx.arc(830, 90, 46, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#2b4f7a";
+  ctx.beginPath(); ctx.arc(816, 78, 34, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "rgba(43,79,122,0.6)";
+  ctx.fillRect(770, 82, 120, 6);
+  // stars (twinkle via visRng-driven alpha)
+  for (var si = 0; si < G.stars.length; si++) {
+    var st = G.stars[si];
+    ctx.globalAlpha = 0.5 + 0.5 * Math.abs(Math.sin(st.tw));
+    ctx.fillStyle = "#e0f2fe";
+    ctx.fillRect(st.x, st.y, st.s, st.s);
+  }
+  ctx.globalAlpha = 1;
+  // menu flybys drift behind the title
+  for (var fi = 0; fi < G.flybys.length; fi++) drawEnemy(G.flybys[fi]);
+  // power-ups
+  for (var ui = 0; ui < G.powerups.length; ui++) drawPowerup(G.powerups[ui]);
+  // enemies
+  for (var ei = 0; ei < G.enemies.length; ei++) drawEnemy(G.enemies[ei]);
+  // player bullets (cyan bolts)
+  ctx.fillStyle = "#67e8f9";
+  for (var bi = 0; bi < G.bullets.length; bi++) {
+    var b = G.bullets[bi];
+    ctx.fillRect(b.x - 3, b.y - 8, 6, 16);
+  }
+  // enemy bullets (orange-red orbs)
+  for (var qi = 0; qi < G.enemyBullets.length; qi++) {
+    var eb = G.enemyBullets[qi];
+    ctx.fillStyle = "#fb923c";
+    ctx.beginPath(); ctx.arc(eb.x, eb.y, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#fde68a";
+    ctx.beginPath(); ctx.arc(eb.x, eb.y, 3, 0, Math.PI * 2); ctx.fill();
+  }
+  // player ship — flashes while invulnerable (skip alternate 0.1 s slices)
+  if (!(G.invulnT > 0 && Math.floor(G.invulnT * 10) % 2 === 0)) {
+    drawPlayerShip();
+  }
+  // particles (juice; skipped entirely under prefers-reduced-motion)
+  for (var q = 0; q < G.particles.length; q++) {
+    var pt = G.particles[q];
+    ctx.globalAlpha = Math.max(0, pt.life / pt.max);
+    ctx.fillStyle = pt.color;
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  // popups (wave banners render bigger)
+  ctx.textAlign = "center";
+  for (var k = 0; k < G.popups.length; k++) {
+    var p = G.popups[k];
+    var a = Math.max(0, p.life / p.max);
+    ctx.globalAlpha = a;
+    ctx.font = p.big ? "900 34px 'Trebuchet MS', Verdana, sans-serif" : "900 26px 'Trebuchet MS', Verdana, sans-serif";
+    ctx.fillStyle = "#ffd166";
+    ctx.fillText(p.text, p.x, p.y - (p.max - p.life) * 40);
+  }
+  ctx.globalAlpha = 1;
+  // boss health bar (top centre, under the HUD)
+  var boss = bossAlive();
+  if (boss) {
+    var bw = 320, bx = (W - bw) / 2, by = 66;
+    ctx.fillStyle = "rgba(5,9,20,0.8)";
+    ctx.fillRect(bx - 4, by - 4, bw + 8, 22);
+    ctx.fillStyle = "#7f1d1d";
+    ctx.fillRect(bx, by, bw, 14);
+    ctx.fillStyle = "#ef4444";
+    ctx.fillRect(bx, by, bw * Math.max(0, boss.hp / boss.maxHp), 14);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "900 13px 'Trebuchet MS', Verdana, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("BOSS  " + Math.max(0, boss.hp) + " / " + boss.maxHp, W / 2, by + 11);
+  }
+  // red hit flash (skipped under prefers-reduced-motion)
+  if (G.flashT > 0 && !REDUCED_MOTION) {
+    ctx.fillStyle = "rgba(255,40,40," + (G.flashT * 0.45).toFixed(3) + ")";
+    ctx.fillRect(-20, -20, 1000, 640);
+  }
+  ctx.restore();
+}
+
+// ---------- main loop: fixed-timestep accumulator (60 Hz) ----------
+// Frame delta is clamped to <=250 ms BEFORE accumulating, so a tab-switch
+// or hitch can never spiral into a catch-up storm.
+var ACC = 0, LAST = 0;
+function loop(ts) {
+  requestAnimationFrame(loop);
+  if (!LAST) LAST = ts || 0;
+  var frameDt = ((ts || 0) - LAST) / 1000;
+  LAST = ts || 0;
+  if (!(frameDt > 0)) frameDt = 0.016;
+  if (frameDt > 0.25) frameDt = 0.25;
+  ACC += frameDt;
+  var steps = 0;
+  while (ACC >= 1 / 60 && steps < 5) { update(1 / 60); ACC -= 1 / 60; steps++; }
+  if (steps === 5) ACC = 0; // drop backlog rather than spiral
+  render();
+}
+// Auto-pause on tab hide; on return, reset the time baseline and zero the
+// accumulator so no stale delta leaks into the next frame.
+if (document.addEventListener) document.addEventListener("visibilitychange", function () {
+  if (document.hidden) { if (G.state === "playing") pauseGame(); }
+  else { LAST = 0; ACC = 0; }
+});
+
+G.stars = makeStars();
+updateMenu();
+updateHUD();
+render();
+requestAnimationFrame(loop);
+try { window.__gameReady = true; } catch (e) {}
+
+window.__StarBlasterTest = {
+  G: G, SAVE: SAVE, startGame: startGame, crash: crash,
+  stepGame: stepGame, pauseGame: pauseGame,
+  resumeGame: resumeGame, showMenu: showMenu, toggleMute: toggleMute,
+  toggleAutoFire: toggleAutoFire, endTutorial: endTutorial, gameOver: gameOver,
+  startWave: startWave, fireBullet: fireBullet, hitPlayer: hitPlayer,
+  killEnemy: killEnemy, applyPowerup: applyPowerup, enemyShoot: enemyShoot,
+  score: score, claimDaily: claimDaily, todayString: todayString,
+  yesterdayString: yesterdayString,
+  rankForScore: rankForScore, rankNextAt: rankNextAt,
+  comboMultiplier: comboMultiplier, killScore: killScore, enemyScore: enemyScore,
+  waveEnemyCount: waveEnemyCount, isBossWave: isBossWave,
+  bulletSpeedForWave: bulletSpeedForWave, waveClearBonus: waveClearBonus,
+  fireInterval: fireInterval, bossHp: bossHp, powerupForKill: powerupForKill,
+  generateSpawnPattern: generateSpawnPattern, spawnWave: spawnWave,
+  rectsOverlap: rectsOverlap, applyCrash: applyCrash,
+  loadSave: loadSave, saveSave: saveSave, defaultSave: defaultSave,
+  mulberry32: mulberry32, render: render, AudioSys: AudioSys,
+  update: update, setState: setState, keysDown: keysDown,
+  spawnBurst: spawnBurst, announce: announce, resizeCanvas: resizeCanvas,
+  ENEMY_SCORES: ENEMY_SCORES, ENEMY_SPECS: ENEMY_SPECS, RANKS: RANKS, W: W, H: H,
+  PLAYER_W: PLAYER_W, PLAYER_H: PLAYER_H, PLAYER_Y: PLAYER_Y, PLAYER_SPEED: PLAYER_SPEED,
+  START_LIVES: START_LIVES, MAX_LIVES: MAX_LIVES, INVULN_TIME: INVULN_TIME,
+  SPREAD_TIME: SPREAD_TIME, SHIELD_TIME: SHIELD_TIME, RAPID_TIME: RAPID_TIME,
+  FIRE_INTERVAL: FIRE_INTERVAL, RAPID_INTERVAL: RAPID_INTERVAL,
+  SAVE_KEY: SAVE_KEY
+};
+</script>
+</body>
+</html>
