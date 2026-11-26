@@ -1,0 +1,1749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Arrow Grid Escape — Tap the arrows, move the blocks, reach the exit!</title>
+<!--
+  Arrow Grid Escape — original HTML5 sliding-block arrow puzzle.
+  100% code-drawn (Canvas 2D + CSS), no images, no audio files, no
+  external URLs. Seeded RNG (mulberry32), localStorage save
+  "arrowgridescape_save_v1".
+
+  HOW TO PLAY: tap any arrow tile — your cube slides in that arrow's
+  direction until something blocks it. Every arrow tile you slide over
+  rotates 90 degrees clockwise: arrows change each other's direction,
+  so plan your route! Reach the glowing EXIT before you run out of
+  moves or time.
+  - Stone Block: immovable, stops your slide (use it as a brake).
+  - Ice Block: pushable — shove it along until it stops.
+  - Portal Tile: slide in, pop out of its pair, keep sliding.
+  - Lock Tile: blocked until you grab the key, then it opens.
+  - Key: slide over it to collect it and open every lock.
+  36 levels across 6 themes (Forest, Snow, Volcano, Neon City, Desert,
+  Ocean). Win coins, spend them on Hint (shows the next best arrow)
+  and Skip Level. Stars: 3 for a par solve, 2 within par+3, else 1.
+  Sounds are tiny WebAudio oscillator/noise blips with a mute toggle.
+  No audio files. Keyboard: arrows/WASD move the cursor, Enter/Space
+  taps the arrow, P pauses, R restarts, H hints, M mutes.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: #070a1d;
+    font-family: "Trebuchet MS", "Segoe UI", Verdana, sans-serif;
+    color: #eef1ff; overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none; -webkit-user-select: none;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #game {
+    position: relative; width: 100%; max-width: 960px; height: 100%;
+    max-height: 600px; margin: 0 auto; aspect-ratio: 960 / 600;
+    background: linear-gradient(180deg, #10163a 0%, #0b1030 55%, #070a1d 100%);
+    overflow: hidden;
+  }
+  @media (min-aspect-ratio: 960/600) { #game { height: 100vh; width: auto; } }
+  canvas#boardCanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; object-fit: contain; }
+  .hidden { display: none !important; }
+
+  /* ---- HUD top bar ---- */
+  #hud {
+    position: absolute; left: 0; right: 0; top: 0; z-index: 5;
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+    pointer-events: none;
+  }
+  #hud .pill {
+    background: rgba(8, 12, 38, 0.82); border: 1px solid rgba(140, 160, 255, 0.35);
+    border-radius: 999px; padding: 6px 12px; font-weight: 800; font-size: 15px;
+    color: #eef1ff; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+  }
+  #hud .pill.timer { color: #ffd166; }
+  #hud .pill.timer.low { color: #ff5d5d; animation: pulse 0.5s infinite alternate; }
+  #hud .pill.moves { color: #7ee2ff; }
+  #hud .pill.moves.low { color: #ff5d5d; animation: pulse 0.5s infinite alternate; }
+  #hud .pill.coins { color: #ffd166; margin-left: auto; }
+  /* Gold coin picture (code-drawn SVG, matches the canvas drawCoin()).
+     One shared gradient (#coinGold) is defined once in the defs block
+     below; every coin pic below references it. Crisp at 15-18px. */
+  .coinSvg { width: 16px; height: 16px; display: inline-block; vertical-align: -3px; }
+  .statBox .coinSvg { width: 18px; height: 18px; vertical-align: -4px; }
+  .btn .coinSvg { width: 15px; height: 15px; vertical-align: -2px; }
+  #hud .pill.level { color: #b8ff9e; }
+  @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.08); } }
+  .iconBtn {
+    pointer-events: auto; width: 38px; height: 38px; border-radius: 12px;
+    border: 1px solid rgba(140, 160, 255, 0.45); background: rgba(20, 28, 70, 0.9);
+    color: #fff; font-size: 19px; font-weight: 900; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  }
+  .iconBtn:active { transform: scale(0.92); }
+
+  /* ---- bottom action bar ---- */
+  #actionBar {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 5;
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+    background: linear-gradient(180deg, rgba(7,10,29,0) 0%, rgba(7,10,29,0.85) 45%);
+  }
+  #tipLine {
+    flex: 1; font-size: 13px; color: #aab6e8; text-align: center;
+    text-shadow: 0 1px 2px #000; overflow: hidden; white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .btn {
+    border: none; border-radius: 14px; padding: 10px 16px; font-family: inherit;
+    font-size: 16px; font-weight: 900; cursor: pointer; color: #231303; white-space: nowrap;
+    background: linear-gradient(180deg, #ffd94d 0%, #f5a623 100%);
+    box-shadow: 0 4px 0 #b97a0e, 0 6px 14px rgba(0,0,0,0.45);
+    text-shadow: 0 1px 0 rgba(255,255,255,0.4);
+  }
+  .btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #b97a0e; }
+  .btn:disabled { filter: grayscale(0.8) brightness(0.65); cursor: default; transform: none; }
+  .btn.blue { background: linear-gradient(180deg, #7cc4ff 0%, #3a86e8 100%); color: #06122e; box-shadow: 0 4px 0 #1d5cb0, 0 6px 14px rgba(0,0,0,0.45); text-shadow: 0 1px 0 rgba(255,255,255,0.45); }
+  .btn.blue:active { box-shadow: 0 1px 0 #1d5cb0; }
+  .btn.green { background: linear-gradient(180deg, #7dff9e 0%, #22b45e 100%); color: #062b12; box-shadow: 0 4px 0 #147a3c, 0 6px 14px rgba(0,0,0,0.45); }
+  .btn.green:active { box-shadow: 0 1px 0 #147a3c; }
+  .btn.ghost { background: rgba(20, 28, 70, 0.9); color: #dfe6ff; box-shadow: 0 4px 0 rgba(8,12,38,0.9); border: 1px solid rgba(140,160,255,0.4); text-shadow: none; }
+  .btn.small { padding: 8px 12px; font-size: 14px; }
+  .btn.shake { animation: shake 0.3s; }
+  @keyframes shake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
+
+  /* ---- overlays ---- */
+  .overlay {
+    position: absolute; inset: 0; z-index: 10; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px; padding: 20px;
+    background: rgba(5, 8, 26, 0.72); backdrop-filter: blur(2px); text-align: center;
+    overflow-y: auto;
+  }
+  .overlay h1 {
+    font-size: 54px; line-height: 0.95; font-weight: 900; letter-spacing: 1px;
+    color: #ffd94d;
+    text-shadow: 0 3px 0 #b97a0e, 0 6px 0 rgba(0,0,0,0.35), 0 10px 24px rgba(0,0,0,0.6);
+  }
+  .overlay h1 .line2 {
+    display: block; font-size: 40px; color: #fff;
+    text-shadow: 0 3px 0 #2b4a8f, 0 6px 0 rgba(0,0,0,0.35), 0 10px 24px rgba(0,0,0,0.6);
+  }
+  .overlay h2 { font-size: 34px; font-weight: 900; color: #fff; text-shadow: 0 3px 0 rgba(0,0,0,0.4); }
+  .overlay p { font-size: 16px; line-height: 1.5; color: #c9d3f5; max-width: 520px; }
+  .overlay .tagline { font-size: 17px; color: #ffe9a8; font-weight: 700; }
+  .note { font-size: 13px; color: #9aa5d6; margin-top: 12px; line-height: 1.5; }
+  .adNote { font-size: 14px; color: #fca5a5; margin: 12px 0 0; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  .statBox {
+    background: rgba(20, 28, 70, 0.85); border: 1px solid rgba(140,160,255,0.35);
+    border-radius: 14px; padding: 10px 16px; font-size: 15px; font-weight: 800;
+  }
+  .statBox b { color: #ffd166; }
+  #starsRow { font-size: 44px; letter-spacing: 6px; color: #ffd94d; text-shadow: 0 3px 8px rgba(0,0,0,0.6); min-height: 52px; }
+  #starsRow .dim { color: rgba(255,255,255,0.22); }
+  #starsRow .starPop { display: inline-block; animation: starPop .45s cubic-bezier(.34,1.56,.64,1) backwards; }
+  @keyframes starPop { from { transform: scale(0) rotate(-30deg); opacity: 0; } to { transform: scale(1) rotate(0deg); opacity: 1; } }
+  #levelGrid {
+    display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px;
+    max-width: 440px; width: 100%; padding: 4px;
+  }
+  .lvlBtn {
+    aspect-ratio: 1; border-radius: 12px; border: 1px solid rgba(140,160,255,0.4);
+    background: linear-gradient(180deg, #2a3572, #1a2250); color: #fff;
+    font-family: inherit; font-size: 18px; font-weight: 900; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  }
+  .lvlBtn .st { font-size: 10px; color: #ffd94d; letter-spacing: 1px; line-height: 1; }
+  .lvlBtn .st .dim { color: rgba(255,255,255,0.28); }
+  .lvlBtn.locked { background: #141a3a; color: rgba(255,255,255,0.35); cursor: default; }
+  .lvlBtn.current { outline: 3px solid #ffd94d; }
+  .lvlBtn:active:not(.locked) { transform: scale(0.94); }
+  .howtoCard {
+    background: rgba(20, 28, 70, 0.85); border: 1px solid rgba(140,160,255,0.35);
+    border-radius: 16px; padding: 14px 18px; text-align: left; max-width: 520px;
+    font-size: 15px; line-height: 1.65; color: #dfe6ff;
+  }
+  .howtoCard b { color: #ffd166; }
+  #toast {
+    position: absolute; left: 50%; top: 56px; transform: translateX(-50%);
+    z-index: 8; background: rgba(8, 12, 38, 0.92); border: 1px solid rgba(140,160,255,0.5);
+    color: #fff; font-weight: 800; font-size: 15px; padding: 9px 16px; border-radius: 999px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5); max-width: 94%;
+    pointer-events: none; text-align: center; line-height: 1.35;
+    opacity: 0; transition: opacity 0.2s;
+  }
+  #toast.show { opacity: 1; }
+  #coachTip {
+    position: absolute; left: 50%; bottom: 64px; transform: translateX(-50%);
+    z-index: 7; background: linear-gradient(180deg, #ffd94d, #f5a623); color: #231303;
+    font-weight: 900; font-size: 15px; padding: 10px 18px; border-radius: 999px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5); max-width: 94%;
+    pointer-events: none; text-align: center; line-height: 1.35;
+  }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  /* Narrow viewports: hide the rotating tip line, keep buttons single-line. */
+  @media (max-width: 700px) {
+    #tipLine { display: none; }
+    .btn.small { padding: 8px 10px; font-size: 13px; }
+    #hud { gap: 4px; padding: 6px 8px; }
+    #hud .pill { font-size: 13px; padding: 5px 9px; }
+    #actionBar { gap: 6px; padding: 6px 8px; }
+  }
+  /* Very narrow phones (<=420px) and short landscape screens: shrink
+     HUD + action bar further so no pill or button is clipped. */
+  @media (max-width: 420px) {
+    .btn.small { padding: 6px 7px; font-size: 12px; }
+    #hud { gap: 3px; padding: 5px 6px; }
+    #hud .pill { font-size: 12px; padding: 4px 7px; }
+    .iconBtn { width: 32px; height: 32px; font-size: 16px; }
+    #actionBar { gap: 4px; padding: 5px 6px; }
+  }
+  @media (max-height: 500px) {
+    #tipLine { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="game">
+  <!-- Shared gold-coin artwork: one gradient def, referenced by every coin
+       pic (HUD, menu, results, Hint/Skip). No external image. -->
+  <svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden"><defs>
+    <radialGradient id="coinGold" cx="35%" cy="30%" r="75%">
+      <stop offset="0%" stop-color="#fff3b0"/>
+      <stop offset="45%" stop-color="#ffd94d"/>
+      <stop offset="80%" stop-color="#f5a623"/>
+      <stop offset="100%" stop-color="#d18a12"/>
+    </radialGradient>
+  </defs></svg>
+  <canvas id="boardCanvas" width="960" height="600"></canvas>
+
+  <div id="hud" class="hidden">
+    <button class="iconBtn" id="btnPause" type="button" title="Pause (P)">&#10074;&#10074;</button>
+    <span class="pill level" id="hudLevel">Level 1</span>
+    <span class="pill timer" id="hudTimer">&#9201; 01:05</span>
+    <span class="pill moves" id="hudMoves">Moves: 4</span>
+    <span class="pill coins" id="hudCoins"><svg class="coinSvg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10.6" fill="url(#coinGold)" stroke="#b97a0e" stroke-width="1.5"/><circle cx="12" cy="12" r="7.4" fill="none" stroke="#c98f1b" stroke-width="1.1" opacity="0.9"/><path d="M12 7.1L13.2 10.4 16.7 10.5 13.9 12.6 14.9 16 12 14 9.1 16 10.1 12.6 7.3 10.5 10.8 10.4Z" fill="#fff3b0" stroke="#d99a1f" stroke-width="0.6" stroke-linejoin="round"/><path d="M4.6 9.4A8 8 0 0 1 9.4 4.6" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" opacity="0.9"/></svg> <span id="hudCoinsNum">0</span></span>
+  </div>
+
+  <div id="actionBar" class="hidden">
+    <button class="btn small" id="btnHint" type="button">&#128161; Hint <svg class="coinSvg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10.6" fill="url(#coinGold)" stroke="#b97a0e" stroke-width="1.5"/><circle cx="12" cy="12" r="7.4" fill="none" stroke="#c98f1b" stroke-width="1.1" opacity="0.9"/><path d="M12 7.1L13.2 10.4 16.7 10.5 13.9 12.6 14.9 16 12 14 9.1 16 10.1 12.6 7.3 10.5 10.8 10.4Z" fill="#fff3b0" stroke="#d99a1f" stroke-width="0.6" stroke-linejoin="round"/><path d="M4.6 9.4A8 8 0 0 1 9.4 4.6" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" opacity="0.9"/></svg>50</button>
+    <button class="btn small blue" id="btnSkip" type="button">&#9193; Skip <svg class="coinSvg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10.6" fill="url(#coinGold)" stroke="#b97a0e" stroke-width="1.5"/><circle cx="12" cy="12" r="7.4" fill="none" stroke="#c98f1b" stroke-width="1.1" opacity="0.9"/><path d="M12 7.1L13.2 10.4 16.7 10.5 13.9 12.6 14.9 16 12 14 9.1 16 10.1 12.6 7.3 10.5 10.8 10.4Z" fill="#fff3b0" stroke="#d99a1f" stroke-width="0.6" stroke-linejoin="round"/><path d="M4.6 9.4A8 8 0 0 1 9.4 4.6" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" opacity="0.9"/></svg>100</button>
+    <button class="btn small ghost" id="btnRestart" type="button">&#8635; Restart</button>
+    <button class="btn small ghost" id="btnSound" type="button">&#128266; Sound: On</button>
+    <span id="tipLine">Tap an arrow — your cube slides that way!</span>
+  </div>
+
+  <div id="toast" role="status"></div>
+  <div id="coachTip" class="hidden"></div>
+  <div id="announcer" class="sr" aria-live="polite"></div>
+
+  <!-- MENU -->
+  <div id="menuOverlay" class="overlay">
+    <h1>ARROW<span class="line2">GRID ESCAPE</span></h1>
+    <p class="tagline">Tap the arrows, move the blocks, reach the exit!</p>
+    <div class="row">
+      <button class="btn green" id="btnPlay" type="button" style="font-size:22px; padding: 14px 42px;">&#9654; PLAY</button>
+    </div>
+    <div class="row">
+      <button class="btn blue" id="btnLevels" type="button">Levels</button>
+      <button class="btn blue" id="btnHowTo" type="button">How to Play</button>
+      <button class="btn ghost" id="btnSoundMenu" type="button">&#128266; Sound: On</button>
+    </div>
+    <div class="row">
+      <span class="statBox">Coins: <svg class="coinSvg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10.6" fill="url(#coinGold)" stroke="#b97a0e" stroke-width="1.5"/><circle cx="12" cy="12" r="7.4" fill="none" stroke="#c98f1b" stroke-width="1.1" opacity="0.9"/><path d="M12 7.1L13.2 10.4 16.7 10.5 13.9 12.6 14.9 16 12 14 9.1 16 10.1 12.6 7.3 10.5 10.8 10.4Z" fill="#fff3b0" stroke="#d99a1f" stroke-width="0.6" stroke-linejoin="round"/><path d="M4.6 9.4A8 8 0 0 1 9.4 4.6" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" opacity="0.9"/></svg> <b id="menuCoins">0</b></span>
+      <span class="statBox">Best score: <b id="menuBest">0</b></span>
+      <span class="statBox">Levels done: <b id="menuDone">0 / 36</b></span>
+    </div>
+    <p class="note">Simple controls &bull; Endless fun &bull; Can you escape?<br>
+    Arrows you slide over TURN 90&deg; &mdash; plan your route!</p>
+  </div>
+
+  <!-- LEVEL SELECT -->
+  <div id="levelsOverlay" class="overlay hidden">
+    <h2>Choose a Level</h2>
+    <div id="levelGrid"></div>
+    <div class="row">
+      <button class="btn blue" id="btnLevelsBack" type="button">Back</button>
+    </div>
+  </div>
+
+  <!-- HOW TO PLAY -->
+  <div id="howtoOverlay" class="overlay hidden">
+    <h2>How to Play</h2>
+    <div class="howtoCard">
+      <b>1. Tap an arrow tile</b> &mdash; your cube slides in that direction until a wall, stone or locked gate stops it.<br>
+      <b>2. Arrows TURN!</b> Every arrow you slide over rotates 90&deg; clockwise. Tap it again later for its new direction.<br>
+      <b>3. Reach the glowing EXIT</b> before your moves or your time run out.<br>
+      <b>Stone</b> never moves &mdash; use it as a brake. <b>Ice</b> slides away when you shove it. <b>Portals</b> teleport you. <b>Keys</b> open <b>locks</b>.<br>
+      <b>Hint</b> (50 coins) lights up the next best arrow. <b>Skip</b> (100 coins) opens the next level.<br>
+      Keyboard: arrows / WASD move the cursor, Enter taps, P pauses, R restarts, H hints, M mutes.
+    </div>
+    <div class="row">
+      <button class="btn green" id="btnHowToPlay" type="button">Got it — Play!</button>
+      <button class="btn blue" id="btnHowToBack" type="button">Back</button>
+    </div>
+  </div>
+
+  <!-- PAUSE -->
+  <div id="pauseOverlay" class="overlay hidden">
+    <h2>Paused</h2>
+    <p>Score: <span id="pauseScore">0</span></p>
+    <div class="row">
+      <button class="btn green" id="btnResume" type="button">Resume</button>
+      <button class="btn blue" id="btnPauseRestart" type="button">Restart Level</button>
+    </div>
+    <div class="row">
+      <button class="btn blue" id="btnPauseLevels" type="button">Level Select</button>
+      <button class="btn ghost" id="btnPauseMenu" type="button">Menu</button>
+    </div>
+  </div>
+
+  <!-- RESULTS -->
+  <div id="resultsOverlay" class="overlay hidden">
+    <h2 id="resultsTitle">Level Complete!</h2>
+    <div id="starsRow"></div>
+    <p id="resultsText"></p>
+    <div class="row">
+      <span class="statBox">Coins earned: <svg class="coinSvg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10.6" fill="url(#coinGold)" stroke="#b97a0e" stroke-width="1.5"/><circle cx="12" cy="12" r="7.4" fill="none" stroke="#c98f1b" stroke-width="1.1" opacity="0.9"/><path d="M12 7.1L13.2 10.4 16.7 10.5 13.9 12.6 14.9 16 12 14 9.1 16 10.1 12.6 7.3 10.5 10.8 10.4Z" fill="#fff3b0" stroke="#d99a1f" stroke-width="0.6" stroke-linejoin="round"/><path d="M4.6 9.4A8 8 0 0 1 9.4 4.6" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" opacity="0.9"/></svg> <b id="resultsCoins">0</b></span>
+      <span class="statBox">Score: <b id="resultsScore">0</b></span>
+    </div>
+    <div class="row">
+      <button class="btn green" id="btnNext" type="button">Next Level</button>
+      <button class="btn blue" id="btnRetry" type="button">Retry</button>
+      <button class="btn blue" id="btnResultsLevels" type="button">Levels</button>
+      <button class="btn blue" id="btnMenu" type="button">Menu</button>
+    </div>
+    <p class="adNote hidden">&#128250; No ads available right now — try again later.</p>
+  </div>
+</div>
+<script>
+// __PURE_LOGIC_START__
+var SAVE_KEY = "arrowgridescape_save_v1";
+var GAME_TITLE = "Arrow Grid Escape";
+var TOTAL_LEVELS = 36;
+var HINT_COST = 50;
+var SKIP_COST = 100;
+var DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]]; // 0=right 1=down 2=left 3=up
+var DIR_ARROW = ["\u2192", "\u2193", "\u2190", "\u2191"];
+var THEMES = ["Forest", "Snow", "Volcano", "Neon City", "Desert", "Ocean"];
+
+function mulberry32(seed) {
+  var a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    var t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+function themeForLevel(n) { return THEMES[Math.floor((n - 1) / 6) % THEMES.length]; }
+
+function defaultSave() {
+  return {
+    v: 1, seed: (Math.floor(Math.random() * 900000) + 100000),
+    coins: 0, unlocked: 1, stars: {}, muted: false,
+    totalWins: 0, score: 0, best: 0, lastLevel: 1, seenHowTo: false
+  };
+}
+function loadSave(store) {
+  var s = defaultSave();
+  try {
+    var st = store || (typeof localStorage !== "undefined" ? localStorage : null);
+    if (!st) return s;
+    var raw = st.getItem(SAVE_KEY);
+    if (!raw) return s;
+    var d = JSON.parse(raw);
+    if (!d || typeof d !== "object") return s;
+    if (typeof d.coins === "number") s.coins = Math.max(0, Math.floor(d.coins));
+    if (typeof d.unlocked === "number") s.unlocked = clamp(Math.floor(d.unlocked), 1, TOTAL_LEVELS);
+    if (d.stars && typeof d.stars === "object") {
+      var k;
+      for (k in d.stars) {
+        var lv = parseInt(k, 10);
+        if (lv >= 1 && lv <= TOTAL_LEVELS) s.stars[lv] = clamp(Math.floor(d.stars[k]) || 0, 0, 3);
+      }
+    }
+    if (typeof d.muted === "boolean") s.muted = d.muted;
+    if (typeof d.totalWins === "number") s.totalWins = Math.max(0, Math.floor(d.totalWins));
+    if (typeof d.score === "number") s.score = Math.max(0, Math.floor(d.score));
+    if (typeof d.best === "number") s.best = Math.max(0, Math.floor(d.best));
+    if (typeof d.lastLevel === "number") s.lastLevel = clamp(Math.floor(d.lastLevel), 1, TOTAL_LEVELS);
+    if (typeof d.seed === "number") s.seed = d.seed >>> 0;
+    if (typeof d.seenHowTo === "boolean") s.seenHowTo = d.seenHowTo;
+    s.v = 1;
+  } catch (e) { /* corrupted save -> defaults */ }
+  return s;
+}
+function saveSave(s, store) {
+  try {
+    var st = store || (typeof localStorage !== "undefined" ? localStorage : null);
+    if (!st) return false;
+    st.setItem(SAVE_KEY, JSON.stringify(s));
+    return true;
+  } catch (e) { return false; }
+}
+
+// --- level data helpers -------------------------------------------------
+// Level object: { n, w, h, time, moves, start:{x,y}, exit:{x,y},
+//   arrows:[{x,y,dir}], stones:[{x,y}], ice:[{x,y}],
+//   portals:[[{x,y},{x,y}]], locks:[{x,y}], keys:[{x,y}] }
+function cellKey(x, y) { return x + "," + y; }
+function levelMaps(level) {
+  var m = { arrows: {}, stones: {}, ice: {}, portals: {}, locks: {}, keys: {} };
+  var i;
+  for (i = 0; i < (level.arrows || []).length; i++) m.arrows[cellKey(level.arrows[i].x, level.arrows[i].y)] = level.arrows[i];
+  for (i = 0; i < (level.stones || []).length; i++) m.stones[cellKey(level.stones[i].x, level.stones[i].y)] = true;
+  for (i = 0; i < (level.ice || []).length; i++) m.ice[cellKey(level.ice[i].x, level.ice[i].y)] = true;
+  for (i = 0; i < (level.portals || []).length; i++) {
+    var p = level.portals[i];
+    m.portals[cellKey(p[0].x, p[0].y)] = p[1];
+    m.portals[cellKey(p[1].x, p[1].y)] = p[0];
+  }
+  for (i = 0; i < (level.locks || []).length; i++) m.locks[cellKey(level.locks[i].x, level.locks[i].y)] = true;
+  for (i = 0; i < (level.keys || []).length; i++) m.keys[cellKey(level.keys[i].x, level.keys[i].y)] = true;
+  return m;
+}
+function validateLevel(level) {
+  // Returns an array of problems (empty = valid shape).
+  var problems = [];
+  if (!level || typeof level.n !== "number") problems.push("missing n");
+  if (!(level.w >= 4 && level.w <= 9) || !(level.h >= 4 && level.h <= 9)) problems.push("bad size");
+  function inB(x, y) { return x >= 0 && x < level.w && y >= 0 && y < level.h; }
+  if (!level.start || !inB(level.start.x, level.start.y)) problems.push("bad start");
+  if (!level.exit || !inB(level.exit.x, level.exit.y)) problems.push("bad exit");
+  if (level.start && level.exit && level.start.x === level.exit.x && level.start.y === level.exit.y) problems.push("start==exit");
+  var seen = {};
+  function occ(x, y, what) {
+    var k = cellKey(x, y);
+    if (!inB(x, y)) { problems.push(what + " out of bounds " + k); return; }
+    if (seen[k]) problems.push(what + " overlaps " + seen[k] + " at " + k);
+    seen[k] = what;
+  }
+  if (level.start) occ(level.start.x, level.start.y, "start");
+  if (level.exit) occ(level.exit.x, level.exit.y, "exit");
+  var i, j;
+  for (i = 0; i < (level.arrows || []).length; i++) { var a = level.arrows[i]; if (a.dir < 0 || a.dir > 3) problems.push("arrow bad dir"); occ(a.x, a.y, "arrow"); }
+  for (i = 0; i < (level.stones || []).length; i++) occ(level.stones[i].x, level.stones[i].y, "stone");
+  for (i = 0; i < (level.ice || []).length; i++) occ(level.ice[i].x, level.ice[i].y, "ice");
+  for (i = 0; i < (level.portals || []).length; i++) { occ(level.portals[i][0].x, level.portals[i][0].y, "portal"); occ(level.portals[i][1].x, level.portals[i][1].y, "portal"); }
+  for (i = 0; i < (level.locks || []).length; i++) occ(level.locks[i].x, level.locks[i].y, "lock");
+  for (i = 0; i < (level.keys || []).length; i++) occ(level.keys[i].x, level.keys[i].y, "key");
+  if ((level.arrows || []).length < 1) problems.push("no arrows");
+  if (!(level.moves >= 1 && level.moves <= 30)) problems.push("bad moves");
+  if (!(level.time >= 20 && level.time <= 300)) problems.push("bad time");
+  return problems;
+}
+
+// --- runtime state ------------------------------------------------------
+// state = { level, hx, hy, arrows: {key:{x,y,dir}}, ice: {key:true},
+//           keyTaken: bool, locksOpen: bool, movesLeft, won }
+function newState(level) {
+  var maps = levelMaps(level);
+  var arrows = {}, k;
+  for (k in maps.arrows) arrows[k] = { x: maps.arrows[k].x, y: maps.arrows[k].y, dir: maps.arrows[k].dir };
+  return {
+    level: level, hx: level.start.x, hy: level.start.y,
+    arrows: arrows, ice: maps.ice, keyTaken: false,
+    locksOpen: (level.keys || []).length === 0, movesLeft: level.moves, won: false
+  };
+}
+function stateKey(st) {
+  var ad = [], k;
+  for (k in st.arrows) ad.push(k + ":" + st.arrows[k].dir);
+  ad.sort();
+  var ic = Object.keys(st.ice).sort().join(";");
+  return st.hx + "," + st.hy + "|" + ad.join(";") + "|" + ic + "|" + (st.keyTaken ? 1 : 0);
+}
+function cloneState(st) {
+  var arrows = {}, k;
+  for (k in st.arrows) arrows[k] = { x: st.arrows[k].x, y: st.arrows[k].y, dir: st.arrows[k].dir };
+  var ice = {}, j;
+  for (j in st.ice) ice[j] = true;
+  return { level: st.level, hx: st.hx, hy: st.hy, arrows: arrows, ice: ice, keyTaken: st.keyTaken, locksOpen: st.locksOpen, movesLeft: st.movesLeft, won: st.won };
+}
+function tappableArrows(st) {
+  // Arrows not covered by an ice block.
+  var out = [], k;
+  for (k in st.arrows) if (!st.ice[k]) out.push(st.arrows[k]);
+  return out;
+}
+
+// Slide the hero in direction dir (0-3). Returns:
+// { ok:false } when the hero cannot move at all, else
+// { ok:true, state, path:[{x,y}...] (cells entered, in order),
+//   rotated:[{x,y,from,to}...], pushed:[{from:{x,y},to:{x,y}}...],
+//   collectedKey:bool, teleports:number, won:bool }
+function slide(st, dir) {
+  var level = st.level;
+  var maps = levelMaps(level);
+  var ns = cloneState(st);
+  ns.won = false; // a new slide starts unwon: only reaching the exit on
+  // THIS slide wins. (Without this, won stuck true after a winning slide,
+  // so a tap in the 280ms win-delay window could slide the hero off the
+  // exit and still be declared a win, with wrong stars/coins.)
+  var d = DIRS[dir];
+  var x = ns.hx, y = ns.hy;
+  var path = [], rotated = [], pushed = [], teleports = 0, collectedKey = false;
+  var passCount = {};
+  // A slide is one straight run: the hero must never cross a cell twice.
+  // Without this, a portal pair aligned with the slide direction bounces
+  // the hero back and forth forever (L17 column 4: 100 teleports, a
+  // 400-cell path, a 420ms flicker). The guard below stays as a backstop.
+  var visited = {};
+  visited[cellKey(x, y)] = true;
+  var guard = 0;
+  while (guard++ < 400) {
+    var nx = x + d[0], ny = y + d[1];
+    if (nx < 0 || nx >= level.w || ny < 0 || ny >= level.h) break; // edge
+    var k = cellKey(nx, ny);
+    if (maps.stones[k]) break;
+    if (maps.locks[k] && !ns.locksOpen) break;
+    if (ns.ice[k]) {
+      // Push the ice block along until blocked (ice cannot enter
+      // exit/portal cells, and cannot pass stones/locks/other ice).
+      var ix = nx, iy = ny, moved = false;
+      while (true) {
+        var jx = ix + d[0], jy = iy + d[1];
+        if (jx < 0 || jx >= level.w || jy < 0 || jy >= level.h) break;
+        var jk = cellKey(jx, jy);
+        if (maps.stones[jk] || (maps.locks[jk] && !ns.locksOpen) || ns.ice[jk]) break;
+        if (jk === cellKey(level.exit.x, level.exit.y) || maps.portals[jk]) break;
+        ix = jx; iy = jy; moved = true;
+      }
+      if (!moved) break; // ice wedged: hero stops here
+      delete ns.ice[k];
+      ns.ice[cellKey(ix, iy)] = true;
+      pushed.push({ from: { x: nx, y: ny }, to: { x: ix, y: iy } });
+      // hero steps into the vacated cell and keeps sliding
+    }
+    if (maps.portals[k]) {
+      var dest = maps.portals[k];
+      visited[k] = true; // the entry cell is crossed
+      if (visited[cellKey(dest.x, dest.y)]) break; // loop: dest already crossed
+      visited[cellKey(dest.x, dest.y)] = true;
+      teleports++;
+      x = dest.x; y = dest.y;
+      path.push({ x: x, y: y });
+      continue;
+    }
+    if (maps.keys[k] && !ns.keyTaken) {
+      collectedKey = true;
+      ns.keyTaken = true;
+      ns.locksOpen = true;
+    }
+    if (k === cellKey(level.exit.x, level.exit.y)) {
+      x = nx; y = ny;
+      path.push({ x: x, y: y });
+      ns.hx = x; ns.hy = y; ns.won = true;
+      break;
+    }
+    if (visited[k]) break; // loop: this cell was already crossed this slide
+    visited[k] = true;
+    if (ns.arrows[k]) passCount[k] = (passCount[k] || 0) + 1;
+    x = nx; y = ny;
+    path.push({ x: x, y: y });
+  }
+  if (path.length === 0) return { ok: false };
+  // Apply rotations: each pass over an arrow rotates it 90 deg CW.
+  var pk;
+  for (pk in passCount) {
+    var a = ns.arrows[pk];
+    if (!a) continue;
+    var from = a.dir;
+    a.dir = (a.dir + passCount[pk]) % 4;
+    rotated.push({ x: a.x, y: a.y, from: from, to: a.dir, passes: passCount[pk] });
+  }
+  ns.hx = x; ns.hy = y;
+  ns.movesLeft = st.movesLeft - 1;
+  return { ok: true, state: ns, path: path, rotated: rotated, pushed: pushed, collectedKey: collectedKey, teleports: teleports, won: ns.won };
+}
+
+// Solver: iterative-deepening DFS with a transposition table.
+// Returns the shortest solution found within movesLeft as a list of
+// {x,y,dir} taps, or null. nodeCap bounds the search.
+function solveLevel(level, maxDepth, nodeCap) {
+  var start = newState(level);
+  var nodes = { n: 0 };
+  var cap = nodeCap || 400000;
+  for (var depth = 1; depth <= (maxDepth || level.moves); depth++) {
+    var seen = {};
+    var sol = dfs(start, depth, [], seen, nodes, cap);
+    if (sol) return { solution: sol, nodes: nodes.n, depth: depth };
+    if (nodes.n > cap) return { solution: null, nodes: nodes.n, depth: depth, capped: true };
+  }
+  return { solution: null, nodes: nodes.n, depth: maxDepth || level.moves };
+}
+function dfs(st, depthLeft, path, seen, nodes, cap) {
+  if (nodes.n > cap) return null;
+  nodes.n++;
+  var key = stateKey(st) + "|" + depthLeft;
+  if (seen[key]) return null;
+  seen[key] = true;
+  if (depthLeft === 0) return null;
+  var arrows = tappableArrows(st);
+  for (var i = 0; i < arrows.length; i++) {
+    var a = arrows[i];
+    var r = slide(st, a.dir);
+    if (!r.ok) continue;
+    var step = { x: a.x, y: a.y, dir: a.dir };
+    if (r.won) return path.concat([step]);
+    var sub = dfs(r.state, depthLeft - 1, path.concat([step]), seen, nodes, cap);
+    if (sub) return sub;
+    if (nodes.n > cap) return null;
+  }
+  return null;
+}
+
+// --- scoring / stars / coins -------------------------------------------
+function starsFor(level, movesUsed, par) {
+  if (movesUsed <= par) return 3;
+  if (movesUsed <= par + 3) return 2;
+  return 1;
+}
+function coinsForWin(stars, movesLeft, timeLeft) {
+  return 20 + stars * 5 + movesLeft * 2 + Math.floor(timeLeft / 10);
+}
+function scoreForWin(levelN, stars, movesLeft, timeLeft) {
+  return levelN * 10 + stars * 100 + movesLeft * 5 + Math.floor(timeLeft);
+}
+function hintFromState(st) {
+  // Best next tap from the current state (shortest solution), or null
+  // when no solution exists within the remaining moves.
+  var live = dfsLive(st, st.movesLeft, 200000);
+  return live && live.length ? live[0] : null;
+}
+function dfsLive(st, maxDepth, nodeCap) {
+  var nodes = { n: 0 };
+  for (var depth = 1; depth <= maxDepth; depth++) {
+    var seen = {};
+    var sol = dfs(st, depth, [], seen, nodes, nodeCap || 200000);
+    if (sol) return sol;
+    if (nodes.n > (nodeCap || 200000)) return null;
+  }
+  return null;
+}
+function isDeadState(st) {
+  return dfsLive(st, st.movesLeft, 120000) === null;
+}
+var LEVELS = [{"n": 1, "w": 5, "h": 5, "time": 65, "moves": 4, "start": {"x": 0, "y": 2}, "exit": {"x": 4, "y": 2}, "arrows": [{"x": 1, "y": 2, "dir": 0}, {"x": 2, "y": 4, "dir": 1}], "stones": [], "ice": [], "portals": [], "locks": [], "keys": [], "par": 1}, {"n": 2, "w": 5, "h": 5, "time": 70, "moves": 5, "start": {"x": 0, "y": 0}, "exit": {"x": 4, "y": 4}, "arrows": [{"x": 1, "y": 0, "dir": 0}, {"x": 4, "y": 1, "dir": 1}, {"x": 2, "y": 2, "dir": 2}], "stones": [], "ice": [], "portals": [], "locks": [], "keys": [], "par": 2}, {"n": 3, "w": 5, "h": 5, "time": 70, "moves": 5, "start": {"x": 4, "y": 4}, "exit": {"x": 0, "y": 0}, "arrows": [{"x": 2, "y": 4, "dir": 2}, {"x": 0, "y": 2, "dir": 3}, {"x": 3, "y": 1, "dir": 1}], "stones": [], "ice": [], "portals": [], "locks": [], "keys": [], "par": 2}, {"n": 4, "w": 6, "h": 6, "time": 70, "moves": 5, "start": {"x": 0, "y": 5}, "exit": {"x": 2, "y": 0}, "arrows": [{"x": 1, "y": 5, "dir": 0}, {"x": 2, "y": 3, "dir": 3}, {"x": 4, "y": 2, "dir": 1}], "stones": [{"x": 3, "y": 5}], "ice": [], "portals": [], "locks": [], "keys": [], "par": 2}, {"n": 5, "w": 6, "h": 6, "time": 70, "moves": 5, "start": {"x": 0, "y": 5}, "exit": {"x": 4, "y": 0}, "arrows": [{"x": 1, "y": 5, "dir": 0}, {"x": 4, "y": 2, "dir": 3}, {"x": 2, "y": 1, "dir": 2}], "stones": [], "ice": [{"x": 3, "y": 5}], "portals": [], "locks": [], "keys": [], "par": 2}, {"n": 6, "w": 6, "h": 6, "time": 70, "moves": 5, "start": {"x": 0, "y": 0}, "exit": {"x": 5, "y": 0}, "arrows": [{"x": 1, "y": 0, "dir": 0}, {"x": 5, "y": 3, "dir": 3}, {"x": 4, "y": 2, "dir": 2}, {"x": 0, "y": 4, "dir": 1}], "stones": [], "ice": [], "portals": [[{"x": 2, "y": 0}, {"x": 2, "y": 5}]], "locks": [], "keys": [], "par": 2}, {"n": 7, "w": 6, "h": 6, "time": 70, "moves": 5, "start": {"x": 0, "y": 5}, "exit": {"x": 5, "y": 0}, "arrows": [{"x": 1, "y": 5, "dir": 0}, {"x": 5, "y": 4, "dir": 3}, {"x": 3, "y": 1, "dir": 2}], "stones": [], "ice": [], "portals": [], "locks": [{"x": 5, "y": 2}], "keys": [{"x": 2, "y": 5}], "par": 2}, {"n": 8, "w": 6, "h": 6, "time": 70, "moves": 5, "start": {"x": 0, "y": 0}, "exit": {"x": 4, "y": 5}, "arrows": [{"x": 1, "y": 0, "dir": 0}, {"x": 4, "y": 4, "dir": 1}, {"x": 2, "y": 1, "dir": 2}, {"x": 5, "y": 2, "dir": 3}], "stones": [], "ice": [{"x": 4, "y": 3}], "portals": [[{"x": 3, "y": 0}, {"x": 0, "y": 3}]], "locks": [], "keys": [], "par": 2}, {"n": 9, "w": 6, "h": 6, "time": 80, "moves": 7, "start": {"x": 5, "y": 0}, "exit": {"x": 0, "y": 0}, "arrows": [{"x": 1, "y": 3, "dir": 2}, {"x": 4, "y": 2, "dir": 1}, {"x": 4, "y": 4, "dir": 2}, {"x": 5, "y": 2, "dir": 3}, {"x": 4, "y": 5, "dir": 1}, {"x": 0, "y": 5, "dir": 0}], "stones": [{"x": 1, "y": 0}], "ice": [], "portals": [], "locks": [], "keys": [], "par": 4}, {"n": 10, "w": 6, "h": 6, "time": 80, "moves": 7, "start": {"x": 5, "y": 1}, "exit": {"x": 2, "y": 5}, "arrows": [{"x": 4, "y": 3, "dir": 3}, {"x": 5, "y": 3, "dir": 2}, {"x": 2, "y": 1, "dir": 1}, {"x": 5, "y": 5, "dir": 0}, {"x": 2, "y": 4, "dir": 2}, {"x": 1, "y": 2, "dir": 2}], "stones": [{"x": 3, "y": 5}], "ice": [], "portals": [], "locks": [], "keys": [], "par": 4}, {"n": 11, "w": 6, "h": 6, "time": 75, "moves": 6, "start": {"x": 0, "y": 4}, "exit": {"x": 1, "y": 0}, "arrows": [{"x": 4, "y": 3, "dir": 3}, {"x": 2, "y": 2, "dir": 0}, {"x": 0, "y": 5, "dir": 3}, {"x": 4, "y": 5, "dir": 2}, {"x": 4, "y": 0, "dir": 2}, {"x": 2, "y": 0, "dir": 1}], "stones": [{"x": 0, "y": 0}], "ice": [], "portals": [], "locks": [], "keys": [], "par": 3}, {"n": 12, "w": 6, "h": 6, "time": 80, "moves": 7, "start": {"x": 0, "y": 4}, "exit": {"x": 0, "y": 1}, "arrows": [{"x": 0, "y": 3, "dir": 0}, {"x": 2, "y": 2, "dir": 3}, {"x": 4, "y": 1, "dir": 2}, {"x": 1, "y": 5, "dir": 1}, {"x": 4, "y": 2, "dir": 3}, {"x": 4, "y": 5, "dir": 3}], "stones": [{"x": 0, "y": 2}], "ice": [], "portals": [], "locks": [], "keys": [], "par": 4}, {"n": 13, "w": 6, "h": 6, "time": 80, "moves": 6, "start": {"x": 0, "y": 4}, "exit": {"x": 0, "y": 0}, "arrows": [{"x": 4, "y": 3, "dir": 0}, {"x": 5, "y": 0, "dir": 3}, {"x": 2, "y": 3, "dir": 2}, {"x": 0, "y": 2, "dir": 3}, {"x": 1, "y": 2, "dir": 2}, {"x": 3, "y": 3, "dir": 0}, {"x": 1, "y": 0, "dir": 0}], "stones": [{"x": 5, "y": 1}, {"x": 2, "y": 2}], "ice": [{"x": 0, "y": 3}], "portals": [], "locks": [], "keys": [], "par": 4}, {"n": 14, "w": 6, "h": 6, "time": 80, "moves": 6, "start": {"x": 1, "y": 1}, "exit": {"x": 5, "y": 0}, "arrows": [{"x": 1, "y": 4, "dir": 3}, {"x": 4, "y": 4, "dir": 2}, {"x": 4, "y": 3, "dir": 1}, {"x": 1, "y": 3, "dir": 0}, {"x": 4, "y": 1, "dir": 3}, {"x": 5, "y": 3, "dir": 0}, {"x": 1, "y": 5, "dir": 1}], "stones": [{"x": 2, "y": 0}, {"x": 1, "y": 2}, {"x": 4, "y": 0}], "ice": [{"x": 2, "y": 1}], "portals": [], "locks": [], "keys": [], "par": 4}, {"n": 15, "w": 6, "h": 6, "time": 80, "moves": 6, "start": {"x": 1, "y": 5}, "exit": {"x": 5, "y": 1}, "arrows": [{"x": 5, "y": 5, "dir": 3}, {"x": 2, "y": 5, "dir": 2}, {"x": 2, "y": 4, "dir": 3}, {"x": 4, "y": 5, "dir": 0}, {"x": 5, "y": 4, "dir": 1}, {"x": 0, "y": 4, "dir": 1}, {"x": 4, "y": 3, "dir": 0}], "stones": [{"x": 1, "y": 1}, {"x": 5, "y": 2}, {"x": 4, "y": 1}], "ice": [{"x": 2, "y": 2}], "portals": [], "locks": [], "keys": [], "par": 4}, {"n": 16, "w": 6, "h": 6, "time": 80, "moves": 6, "start": {"x": 0, "y": 0}, "exit": {"x": 1, "y": 1}, "arrows": [{"x": 0, "y": 4, "dir": 0}, {"x": 3, "y": 4, "dir": 1}, {"x": 2, "y": 2, "dir": 0}, {"x": 0, "y": 5, "dir": 3}, {"x": 2, "y": 5, "dir": 2}, {"x": 4, "y": 4, "dir": 0}, {"x": 5, "y": 3, "dir": 2}], "stones": [{"x": 5, "y": 0}, {"x": 0, "y": 1}], "ice": [{"x": 3, "y": 5}], "portals": [], "locks": [], "keys": [], "par": 4}, {"n": 17, "w": 7, "h": 7, "time": 80, "moves": 6, "start": {"x": 4, "y": 2}, "exit": {"x": 0, "y": 5}, "arrows": [{"x": 2, "y": 0, "dir": 2}, {"x": 1, "y": 5, "dir": 1}, {"x": 4, "y": 1, "dir": 0}, {"x": 6, "y": 2, "dir": 1}, {"x": 3, "y": 5, "dir": 2}, {"x": 6, "y": 0, "dir": 3}, {"x": 6, "y": 6, "dir": 3}, {"x": 3, "y": 3, "dir": 0}], "stones": [{"x": 5, "y": 1}, {"x": 0, "y": 4}], "ice": [], "portals": [[{"x": 4, "y": 4}, {"x": 4, "y": 0}]], "locks": [], "keys": [], "par": 4}, {"n": 18, "w": 7, "h": 7, "time": 80, "moves": 6, "start": {"x": 5, "y": 2}, "exit": {"x": 0, "y": 0}, "arrows": [{"x": 2, "y": 5, "dir": 2}, {"x": 2, "y": 0, "dir": 1}, {"x": 2, "y": 4, "dir": 0}, {"x": 4, "y": 0, "dir": 3}, {"x": 5, "y": 5, "dir": 2}, {"x": 0, "y": 4, "dir": 3}, {"x": 2, "y": 1, "dir": 0}, {"x": 4, "y": 6, "dir": 1}], "stones": [{"x": 0, "y": 2}, {"x": 6, "y": 0}, {"x": 1, "y": 0}], "ice": [], "portals": [[{"x": 0, "y": 3}, {"x": 3, "y": 3}]], "locks": [], "keys": [], "par": 4}, {"n": 19, "w": 7, "h": 7, "time": 80, "moves": 6, "start": {"x": 6, "y": 1}, "exit": {"x": 5, "y": 6}, "arrows": [{"x": 1, "y": 3, "dir": 2}, {"x": 6, "y": 4, "dir": 1}, {"x": 1, "y": 0, "dir": 0}, {"x": 6, "y": 2, "dir": 3}, {"x": 6, "y": 5, "dir": 0}, {"x": 4, "y": 3, "dir": 1}, {"x": 4, "y": 4, "dir": 1}, {"x": 0, "y": 0, "dir": 2}], "stones": [{"x": 3, "y": 6}, {"x": 6, "y": 0}, {"x": 6, "y": 6}, {"x": 4, "y": 6}], "ice": [], "portals": [[{"x": 3, "y": 2}, {"x": 1, "y": 4}]], "locks": [], "keys": [], "par": 4}, {"n": 20, "w": 7, "h": 7, "time": 80, "moves": 6, "start": {"x": 0, "y": 1}, "exit": {"x": 5, "y": 0}, "arrows": [{"x": 2, "y": 5, "dir": 3}, {"x": 4, "y": 2, "dir": 0}, {"x": 2, "y": 1, "dir": 1}, {"x": 4, "y": 5, "dir": 0}, {"x": 0, "y": 5, "dir": 3}, {"x": 5, "y": 2, "dir": 2}, {"x": 6, "y": 1, "dir": 0}, {"x": 3, "y": 1, "dir": 0}], "stones": [{"x": 4, "y": 0}, {"x": 4, "y": 1}, {"x": 5, "y": 1}], "ice": [], "portals": [[{"x": 1, "y": 6}, {"x": 2, "y": 4}]], "locks": [], "keys": [], "par": 4}, {"n": 21, "w": 7, "h": 7, "time": 70, "moves": 7, "start": {"x": 0, "y": 6}, "exit": {"x": 6, "y": 3}, "arrows": [{"x": 2, "y": 4, "dir": 0}, {"x": 1, "y": 1, "dir": 3}, {"x": 4, "y": 3, "dir": 2}, {"x": 5, "y": 1, "dir": 3}, {"x": 4, "y": 4, "dir": 0}, {"x": 2, "y": 2, "dir": 1}, {"x": 2, "y": 1, "dir": 1}, {"x": 2, "y": 3, "dir": 1}], "stones": [{"x": 5, "y": 2}, {"x": 1, "y": 2}, {"x": 6, "y": 4}], "ice": [], "portals": [], "locks": [{"x": 6, "y": 1}], "keys": [{"x": 1, "y": 6}], "par": 5}, {"n": 22, "w": 7, "h": 7, "time": 75, "moves": 8, "start": {"x": 4, "y": 1}, "exit": {"x": 0, "y": 4}, "arrows": [{"x": 4, "y": 4, "dir": 2}, {"x": 5, "y": 4, "dir": 3}, {"x": 4, "y": 3, "dir": 0}, {"x": 3, "y": 4, "dir": 1}, {"x": 1, "y": 2, "dir": 2}, {"x": 3, "y": 5, "dir": 3}, {"x": 1, "y": 5, "dir": 0}, {"x": 2, "y": 6, "dir": 3}], "stones": [{"x": 5, "y": 1}, {"x": 0, "y": 3}, {"x": 2, "y": 3}, {"x": 1, "y": 4}], "ice": [], "portals": [], "locks": [{"x": 0, "y": 5}], "keys": [{"x": 2, "y": 0}], "par": 6}, {"n": 23, "w": 7, "h": 7, "time": 75, "moves": 8, "start": {"x": 2, "y": 5}, "exit": {"x": 0, "y": 2}, "arrows": [{"x": 5, "y": 3, "dir": 2}, {"x": 2, "y": 0, "dir": 3}, {"x": 2, "y": 3, "dir": 0}, {"x": 1, "y": 0, "dir": 1}, {"x": 1, "y": 1, "dir": 2}, {"x": 2, "y": 4, "dir": 3}, {"x": 6, "y": 1, "dir": 0}, {"x": 5, "y": 5, "dir": 2}], "stones": [{"x": 0, "y": 1}, {"x": 3, "y": 5}, {"x": 1, "y": 4}], "ice": [], "portals": [], "locks": [{"x": 0, "y": 3}], "keys": [{"x": 6, "y": 4}], "par": 6}, {"n": 24, "w": 7, "h": 7, "time": 75, "moves": 8, "start": {"x": 6, "y": 4}, "exit": {"x": 6, "y": 6}, "arrows": [{"x": 5, "y": 2, "dir": 3}, {"x": 3, "y": 3, "dir": 2}, {"x": 1, "y": 2, "dir": 1}, {"x": 1, "y": 1, "dir": 0}, {"x": 3, "y": 2, "dir": 1}, {"x": 1, "y": 3, "dir": 0}, {"x": 2, "y": 2, "dir": 2}, {"x": 1, "y": 5, "dir": 1}], "stones": [{"x": 5, "y": 4}, {"x": 0, "y": 5}, {"x": 3, "y": 4}, {"x": 6, "y": 5}], "ice": [], "portals": [], "locks": [{"x": 4, "y": 6}], "keys": [{"x": 4, "y": 0}], "par": 6}, {"n": 25, "w": 7, "h": 8, "time": 70, "moves": 6, "start": {"x": 1, "y": 3}, "exit": {"x": 0, "y": 2}, "arrows": [{"x": 2, "y": 4, "dir": 0}, {"x": 5, "y": 0, "dir": 1}, {"x": 3, "y": 5, "dir": 2}, {"x": 6, "y": 0, "dir": 1}, {"x": 0, "y": 5, "dir": 0}, {"x": 0, "y": 0, "dir": 3}, {"x": 4, "y": 0, "dir": 2}, {"x": 4, "y": 4, "dir": 3}, {"x": 0, "y": 4, "dir": 0}], "stones": [{"x": 5, "y": 1}, {"x": 6, "y": 7}, {"x": 3, "y": 4}, {"x": 0, "y": 3}, {"x": 0, "y": 1}], "ice": [{"x": 1, "y": 5}], "portals": [[{"x": 2, "y": 0}, {"x": 1, "y": 1}]], "locks": [], "keys": [], "par": 5}, {"n": 26, "w": 7, "h": 8, "time": 70, "moves": 6, "start": {"x": 4, "y": 2}, "exit": {"x": 6, "y": 5}, "arrows": [{"x": 4, "y": 6, "dir": 0}, {"x": 4, "y": 1, "dir": 3}, {"x": 2, "y": 4, "dir": 2}, {"x": 5, "y": 4, "dir": 1}, {"x": 5, "y": 7, "dir": 0}, {"x": 2, "y": 3, "dir": 3}, {"x": 3, "y": 1, "dir": 0}, {"x": 5, "y": 3, "dir": 1}, {"x": 5, "y": 0, "dir": 1}], "stones": [{"x": 2, "y": 2}, {"x": 2, "y": 7}, {"x": 1, "y": 4}, {"x": 6, "y": 6}, {"x": 6, "y": 4}], "ice": [{"x": 1, "y": 3}], "portals": [[{"x": 5, "y": 6}, {"x": 3, "y": 2}]], "locks": [], "keys": [], "par": 5}, {"n": 27, "w": 7, "h": 8, "time": 75, "moves": 7, "start": {"x": 2, "y": 0}, "exit": {"x": 6, "y": 4}, "arrows": [{"x": 0, "y": 6, "dir": 2}, {"x": 6, "y": 6, "dir": 1}, {"x": 4, "y": 1, "dir": 0}, {"x": 2, "y": 5, "dir": 1}, {"x": 6, "y": 7, "dir": 0}, {"x": 2, "y": 7, "dir": 3}, {"x": 1, "y": 7, "dir": 0}, {"x": 3, "y": 0, "dir": 0}, {"x": 5, "y": 5, "dir": 2}], "stones": [{"x": 5, "y": 7}, {"x": 4, "y": 3}, {"x": 0, "y": 4}, {"x": 6, "y": 5}], "ice": [{"x": 6, "y": 3}], "portals": [[{"x": 2, "y": 1}, {"x": 1, "y": 2}]], "locks": [], "keys": [], "par": 6}, {"n": 28, "w": 7, "h": 8, "time": 75, "moves": 7, "start": {"x": 1, "y": 0}, "exit": {"x": 5, "y": 7}, "arrows": [{"x": 3, "y": 3, "dir": 2}, {"x": 1, "y": 3, "dir": 1}, {"x": 4, "y": 0, "dir": 0}, {"x": 4, "y": 4, "dir": 1}, {"x": 5, "y": 0, "dir": 2}, {"x": 1, "y": 7, "dir": 1}, {"x": 6, "y": 1, "dir": 0}, {"x": 2, "y": 0, "dir": 0}, {"x": 4, "y": 1, "dir": 3}], "stones": [{"x": 0, "y": 6}, {"x": 6, "y": 7}, {"x": 2, "y": 6}], "ice": [{"x": 5, "y": 4}], "portals": [[{"x": 1, "y": 2}, {"x": 5, "y": 2}]], "locks": [], "keys": [], "par": 6}, {"n": 29, "w": 8, "h": 8, "time": 75, "moves": 7, "start": {"x": 0, "y": 0}, "exit": {"x": 7, "y": 5}, "arrows": [{"x": 4, "y": 1, "dir": 0}, {"x": 2, "y": 3, "dir": 1}, {"x": 1, "y": 4, "dir": 2}, {"x": 1, "y": 3, "dir": 3}, {"x": 2, "y": 5, "dir": 2}, {"x": 1, "y": 2, "dir": 1}, {"x": 6, "y": 5, "dir": 0}, {"x": 5, "y": 6, "dir": 3}, {"x": 4, "y": 5, "dir": 2}], "stones": [{"x": 3, "y": 6}, {"x": 7, "y": 4}, {"x": 4, "y": 3}], "ice": [{"x": 3, "y": 1}, {"x": 3, "y": 3}], "portals": [], "locks": [{"x": 7, "y": 6}], "keys": [{"x": 7, "y": 1}], "par": 6}, {"n": 30, "w": 8, "h": 8, "time": 80, "moves": 8, "start": {"x": 3, "y": 1}, "exit": {"x": 4, "y": 4}, "arrows": [{"x": 4, "y": 1, "dir": 3}, {"x": 7, "y": 1, "dir": 2}, {"x": 5, "y": 1, "dir": 1}, {"x": 1, "y": 1, "dir": 0}, {"x": 3, "y": 3, "dir": 1}, {"x": 5, "y": 0, "dir": 2}, {"x": 6, "y": 6, "dir": 3}, {"x": 6, "y": 1, "dir": 0}, {"x": 2, "y": 7, "dir": 1}], "stones": [{"x": 0, "y": 3}, {"x": 4, "y": 5}, {"x": 5, "y": 4}, {"x": 4, "y": 3}], "ice": [{"x": 5, "y": 5}, {"x": 7, "y": 0}], "portals": [], "locks": [{"x": 3, "y": 4}], "keys": [{"x": 0, "y": 2}], "par": 7}, {"n": 31, "w": 8, "h": 8, "time": 85, "moves": 9, "start": {"x": 5, "y": 1}, "exit": {"x": 2, "y": 0}, "arrows": [{"x": 1, "y": 1, "dir": 0}, {"x": 6, "y": 5, "dir": 1}, {"x": 4, "y": 1, "dir": 2}, {"x": 1, "y": 3, "dir": 3}, {"x": 6, "y": 4, "dir": 2}, {"x": 0, "y": 0, "dir": 1}, {"x": 5, "y": 6, "dir": 0}, {"x": 3, "y": 1, "dir": 3}, {"x": 7, "y": 0, "dir": 1}], "stones": [{"x": 3, "y": 7}, {"x": 4, "y": 3}, {"x": 3, "y": 0}, {"x": 1, "y": 0}], "ice": [{"x": 1, "y": 2}, {"x": 0, "y": 3}], "portals": [], "locks": [{"x": 2, "y": 6}], "keys": [{"x": 7, "y": 6}], "par": 8}, {"n": 32, "w": 8, "h": 8, "time": 90, "moves": 10, "start": {"x": 7, "y": 6}, "exit": {"x": 4, "y": 4}, "arrows": [{"x": 3, "y": 6, "dir": 3}, {"x": 2, "y": 6, "dir": 2}, {"x": 6, "y": 6, "dir": 3}, {"x": 2, "y": 1, "dir": 2}, {"x": 7, "y": 0, "dir": 1}, {"x": 6, "y": 3, "dir": 0}, {"x": 6, "y": 0, "dir": 3}, {"x": 3, "y": 2, "dir": 2}, {"x": 4, "y": 6, "dir": 0}], "stones": [{"x": 3, "y": 4}, {"x": 7, "y": 3}, {"x": 5, "y": 5}, {"x": 4, "y": 5}], "ice": [{"x": 3, "y": 5}, {"x": 5, "y": 1}], "portals": [], "locks": [{"x": 6, "y": 4}], "keys": [{"x": 4, "y": 2}], "par": 9}, {"n": 33, "w": 8, "h": 8, "time": 85, "moves": 9, "start": {"x": 1, "y": 5}, "exit": {"x": 3, "y": 0}, "arrows": [{"x": 1, "y": 1, "dir": 0}, {"x": 4, "y": 6, "dir": 1}, {"x": 3, "y": 6, "dir": 2}, {"x": 2, "y": 7, "dir": 3}, {"x": 3, "y": 4, "dir": 0}, {"x": 6, "y": 1, "dir": 1}, {"x": 4, "y": 4, "dir": 2}, {"x": 6, "y": 3, "dir": 3}, {"x": 4, "y": 3, "dir": 0}, {"x": 2, "y": 1, "dir": 1}], "stones": [{"x": 4, "y": 0}, {"x": 7, "y": 3}, {"x": 4, "y": 7}, {"x": 2, "y": 4}, {"x": 3, "y": 1}], "ice": [{"x": 1, "y": 3}, {"x": 0, "y": 3}], "portals": [[{"x": 6, "y": 6}, {"x": 1, "y": 6}]], "locks": [{"x": 2, "y": 0}], "keys": [{"x": 4, "y": 2}], "par": 8}, {"n": 34, "w": 8, "h": 8, "time": 90, "moves": 10, "start": {"x": 0, "y": 0}, "exit": {"x": 2, "y": 3}, "arrows": [{"x": 3, "y": 2, "dir": 0}, {"x": 1, "y": 1, "dir": 1}, {"x": 7, "y": 6, "dir": 0}, {"x": 6, "y": 0, "dir": 1}, {"x": 3, "y": 5, "dir": 2}, {"x": 3, "y": 4, "dir": 3}, {"x": 2, "y": 1, "dir": 0}, {"x": 6, "y": 5, "dir": 1}, {"x": 6, "y": 2, "dir": 2}, {"x": 2, "y": 4, "dir": 0}], "stones": [{"x": 6, "y": 3}, {"x": 5, "y": 0}, {"x": 4, "y": 4}, {"x": 1, "y": 3}, {"x": 2, "y": 2}], "ice": [{"x": 2, "y": 5}, {"x": 7, "y": 2}], "portals": [[{"x": 7, "y": 7}, {"x": 4, "y": 6}]], "locks": [{"x": 3, "y": 3}], "keys": [{"x": 5, "y": 4}], "par": 9}, {"n": 35, "w": 8, "h": 8, "time": 80, "moves": 8, "start": {"x": 4, "y": 0}, "exit": {"x": 6, "y": 7}, "arrows": [{"x": 4, "y": 2, "dir": 2}, {"x": 5, "y": 3, "dir": 1}, {"x": 2, "y": 5, "dir": 0}, {"x": 3, "y": 1, "dir": 3}, {"x": 1, "y": 1, "dir": 0}, {"x": 3, "y": 2, "dir": 1}, {"x": 5, "y": 2, "dir": 2}, {"x": 4, "y": 4, "dir": 1}, {"x": 5, "y": 5, "dir": 0}, {"x": 7, "y": 4, "dir": 3}], "stones": [{"x": 5, "y": 0}, {"x": 3, "y": 5}, {"x": 5, "y": 1}, {"x": 7, "y": 7}], "ice": [{"x": 3, "y": 3}, {"x": 4, "y": 5}], "portals": [[{"x": 2, "y": 3}, {"x": 4, "y": 1}]], "locks": [{"x": 4, "y": 7}], "keys": [{"x": 6, "y": 2}], "par": 7}, {"n": 36, "w": 8, "h": 8, "time": 85, "moves": 9, "start": {"x": 7, "y": 1}, "exit": {"x": 1, "y": 0}, "arrows": [{"x": 7, "y": 7, "dir": 3}, {"x": 6, "y": 2, "dir": 2}, {"x": 6, "y": 5, "dir": 1}, {"x": 4, "y": 2, "dir": 0}, {"x": 2, "y": 2, "dir": 3}, {"x": 2, "y": 3, "dir": 2}, {"x": 4, "y": 5, "dir": 1}, {"x": 7, "y": 6, "dir": 2}, {"x": 0, "y": 6, "dir": 3}, {"x": 2, "y": 7, "dir": 2}], "stones": [{"x": 0, "y": 7}, {"x": 2, "y": 0}, {"x": 0, "y": 3}, {"x": 6, "y": 7}, {"x": 0, "y": 0}], "ice": [{"x": 7, "y": 5}, {"x": 7, "y": 2}], "portals": [[{"x": 7, "y": 4}, {"x": 6, "y": 1}]], "locks": [{"x": 1, "y": 3}], "keys": [{"x": 5, "y": 2}], "par": 8}];
+// __PURE_LOGIC_END__
+
+"use strict";
+// ---------------------------------------------------------------------------
+// Themes — visual identity per world (palette + decoration style).
+// ---------------------------------------------------------------------------
+var THEME_ART = {
+  "Forest":    { bg: ["#0d2b1d", "#0a1f16", "#06130d"], frame: "#3f7a4e", tile: "#355c44", tileAlt: "#2f5240", floor: "#29473a", accent: "#8fe388", deco: "trees",    glow: "rgba(143,227,136,0.25)" },
+  "Snow":      { bg: ["#16233d", "#101a2e", "#0a1220"], frame: "#5b7fb8", tile: "#35496b", tileAlt: "#2f4260", floor: "#263852", accent: "#aee6ff", deco: "snow",     glow: "rgba(174,230,255,0.25)" },
+  "Volcano":   { bg: ["#2e120c", "#200d08", "#140805"], frame: "#b8502e", tile: "#573325", tileAlt: "#4d2d20", floor: "#40261a", accent: "#ffb347", deco: "embers",   glow: "rgba(255,150,60,0.30)" },
+  "Neon City": { bg: ["#1b0f33", "#120a24", "#0a0616"], frame: "#8a5cf6", tile: "#372a5e", tileAlt: "#302355", floor: "#271d42", accent: "#ff5ce1", deco: "city",     glow: "rgba(255,92,225,0.22)" },
+  "Desert":    { bg: ["#2e2110", "#211708", "#140e04"], frame: "#c98f3d", tile: "#57452a", tileAlt: "#4d3d24", floor: "#40331e", accent: "#ffd166", deco: "dunes",    glow: "rgba(255,209,102,0.25)" },
+  "Ocean":     { bg: ["#0a2530", "#081c26", "#051218"], frame: "#2e9db8", tile: "#254e5e", tileAlt: "#214756", floor: "#1a3a48", accent: "#5ce1e6", deco: "bubbles",  glow: "rgba(92,225,230,0.25)" }
+};
+var HERO_COLORS = ["#ff4d4d", "#3aa7ff", "#37d67a", "#ffc93c", "#a55eea"];
+var TIPS = [
+  "Tap an arrow — your cube slides that way!",
+  "Arrows you slide over TURN 90° — plan ahead!",
+  "Stones never move — use them as brakes.",
+  "Shove ice blocks out of your way.",
+  "Portals teleport you — keep sliding!",
+  "Grab the key, then the lock opens.",
+  "Fewer moves left = more coins. Solve at par for 3 stars!",
+  "Hint lights up the next best arrow."
+];
+
+// ---------------------------------------------------------------------------
+// Audio — tiny WebAudio blips, no files. Anchors below must stay exact:
+// the portal-variant builder hooks on the ctx/tone/noise lines.
+// ---------------------------------------------------------------------------
+var AudioSys = {
+  ctx: null, enabled: true,
+  ensure: function () {
+    if (this.ctx) { try { if (this.ctx.state === "suspended") this.ctx.resume(); } catch (e) {} return; }
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) this.ctx = new AC();
+    } catch (e) { this.ctx = null; }
+  },
+  tone: function (freq, dur, type, vol, slideTo) {
+    if (SAVE.muted) return;
+    try {
+      this.ensure();
+      if (!this.ctx) return;
+      var t = this.ctx.currentTime;
+      var o = this.ctx.createOscillator(), g = this.ctx.createGain();
+      o.type = type || "sine";
+      o.frequency.setValueAtTime(freq, t);
+      if (slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(30, slideTo), t + dur);
+      g.gain.setValueAtTime(vol || 0.12, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      o.connect(g); g.connect(this.ctx.destination);
+      o.start(t); o.stop(t + dur + 0.02);
+    } catch (e) {}
+  },
+  noise: function (dur, vol) {
+    if (SAVE.muted) return;
+    try {
+      this.ensure();
+      if (!this.ctx) return;
+      var t = this.ctx.currentTime;
+      var len = Math.max(1, Math.floor(this.ctx.sampleRate * dur));
+      var buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+      var d = buf.getChannelData(0);
+      for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      var src = this.ctx.createBufferSource(); src.buffer = buf;
+      var f = this.ctx.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 2400;
+      var g = this.ctx.createGain(); g.gain.setValueAtTime(vol || 0.10, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      src.connect(f); f.connect(g); g.connect(this.ctx.destination);
+      src.start(t);
+    } catch (e) {}
+  },
+  // usfxr "mutation" idea, clean-room: repeated percussive SFX vary
+  // slightly per play so they never sound identical. Melodic SFX
+  // (key/portal/coin/win/lose) stay exact — detuning a melody is a bug.
+  jitter: function (f) { return f * (1 + (Math.random() * 2 - 1) * 0.05); },
+  click: function () { this.tone(this.jitter(660), 0.06, "square", 0.06); },
+  slide: function () { this.noise(0.16 * (1 + (Math.random() * 2 - 1) * 0.1), 0.10); },
+  rotate: function () { var f = this.jitter(880); this.tone(f, 0.07, "square", 0.07, f * 1.5); },
+  invalid: function () { this.tone(this.jitter(130), 0.12, "sawtooth", 0.10, 90); },
+  key: function () { this.tone(880, 0.10, "sine", 0.12, 1320); this.tone(1320, 0.14, "sine", 0.10); },
+  portal: function () { this.tone(300, 0.22, "sine", 0.12, 980); },
+  coin: function () { this.tone(988, 0.08, "sine", 0.10); setTimeout(function () { AudioSys.tone(1319, 0.12, "sine", 0.10); }, 70); },
+  win: function () { var n = [523, 659, 784, 1047]; for (var i = 0; i < n.length; i++) { (function (f, d) { setTimeout(function () { AudioSys.tone(f, 0.18, "triangle", 0.14); }, d); })(n[i], i * 110); } },
+  lose: function () { var n = [392, 330, 262]; for (var i = 0; i < n.length; i++) { (function (f, d) { setTimeout(function () { AudioSys.tone(f, 0.22, "triangle", 0.12); }, d); })(n[i], i * 140); } }
+};
+
+// Procedural background music — the Tone.js Transport concept
+// (lookahead scheduling + synth voices) reimplemented clean-room on raw
+// WebAudio. The Tone.js library itself is far too large to inline into a
+// single-file portal game, so this is ~45 lines of the same idea: a sparse
+// minor-pentatonic loop whose root follows the current theme. It starts
+// only after a user gesture (Play), stops on pause/menu/results, obeys
+// the mute toggle, and is fully inert with no AudioContext (tests, old
+// browsers). Volume stays well under the SFX so it never fights a jingle.
+var Music = {
+  timer: null, step: 0, nextT: 0, notes: 0,
+  ROOTS: { Forest: 261.63, Snow: 293.66, Volcano: 311.13, "Neon City": 349.23, Desert: 392.00, Ocean: 440.00 },
+  SCALE: [0, 3, 5, 7, 10, 12, 15],
+  start: function () {
+    // Also respect the variant ad-mute flags: AudioSys.adMuted is set by
+    // the portal adapters during ads, and CG.sdkMuted mirrors the portal
+    // SDK's own mute setting. Neither exists in the plain build (undefined
+    // -> falsy), so the guards are inert there and live in the variants.
+    if (this.timer || SAVE.muted || AudioSys.adMuted || (typeof CG !== "undefined" && CG.sdkMuted)) return;
+    AudioSys.ensure();
+    if (!AudioSys.ctx) return;
+    this.step = 0; this.nextT = AudioSys.ctx.currentTime + 0.08;
+    var self = this;
+    this.timer = setInterval(function () { self.tick(); }, 120);
+  },
+  stop: function () { if (this.timer) { clearInterval(this.timer); this.timer = null; } },
+  note: function (freq, t, dur, type, vol) {
+    try {
+      var o = AudioSys.ctx.createOscillator(), g = AudioSys.ctx.createGain();
+      o.type = type; o.frequency.setValueAtTime(freq, t);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(vol, t + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(AudioSys.ctx.destination);
+      o.start(t); o.stop(t + dur + 0.05);
+      this.notes++;
+    } catch (e) {}
+  },
+  tick: function () {
+    if (SAVE.muted || AudioSys.adMuted || (typeof CG !== "undefined" && CG.sdkMuted) || G.state !== "playing" || !AudioSys.ctx) { this.stop(); return; }
+    var ct = AudioSys.ctx.currentTime;
+    while (this.nextT < ct + 0.35) {
+      var s = this.step % 16;
+      var root = this.ROOTS[themeForLevel(G.level)] || 261.63;
+      if (s % 2 === 0) {
+        var deg = this.SCALE[(this.step * 5 + G.level) % this.SCALE.length];
+        this.note(root * Math.pow(2, deg / 12), this.nextT, 0.5, "sine", 0.032);
+      }
+      if (s === 0) this.note(root / 2, this.nextT, 1.9, "triangle", 0.05);
+      if (s === 8) this.note(root * 1.5, this.nextT, 1.2, "triangle", 0.03);
+      this.nextT += 0.25;
+      this.step++;
+    }
+  }
+};
+
+// ---------------------------------------------------------------------------
+// State + helpers
+// ---------------------------------------------------------------------------
+var SAVE = loadSave();
+var canvas = document.getElementById("boardCanvas");
+var ctx = canvas.getContext("2d");
+function $(id) { return document.getElementById(id); }
+function show(el, on) { if (el) el.classList.toggle("hidden", !on); }
+function announce(msg) { var a = $("announcer"); if (a) a.textContent = msg; }
+var toastTimer = null;
+function toast(msg, ms) {
+  var t = $("toast");
+  if (!t) return;
+  t.textContent = msg;
+  t.classList.add("show");
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.classList.remove("show"); }, ms || 2400);
+}
+function fmtTime(s) {
+  s = Math.max(0, Math.ceil(s));
+  var m = Math.floor(s / 60), r = s % 60;
+  return (m < 10 ? "0" : "") + m + ":" + (r < 10 ? "0" : "") + r;
+}
+function setState(s) { G.state = s; }
+function persistSave() { saveSave(SAVE); }
+
+var G = {
+  state: "menu", level: SAVE.lastLevel || 1, score: SAVE.score || 0,
+  st: null, timeLeft: 0, movesLeft: 0,
+  animating: false, anim: null, spinAnims: [],
+  cursor: { x: 0, y: 0 }, hintCell: null,
+  shake: 0, flashCell: null, flashUntil: 0,
+  particles: [], decor: [], decorT: 0, tipIdx: 0,
+  coachStep: 0, lastTs: 0, coachDone: false
+};
+var COACH = {
+  1: "Tap the glowing arrow — your cube slides that way!",
+  2: "Chain your slides to reach the EXIT!",
+  3: "Arrows you slide over TURN — tap one again for its new direction!"
+};
+
+function boardGeom() {
+  var lv = LEVELS[G.level - 1];
+  var cell = Math.floor(Math.min(860 / lv.w, 430 / lv.h));
+  var bw = cell * lv.w, bh = cell * lv.h;
+  return { cell: cell, ox: Math.floor((960 - bw) / 2), oy: Math.floor((600 - bh) / 2) + 16, bw: bw, bh: bh };
+}
+function cellCenter(cx, cy) {
+  var g = boardGeom();
+  return { x: g.ox + cx * g.cell + g.cell / 2, y: g.oy + cy * g.cell + g.cell / 2 };
+}
+function themeArt() { return THEME_ART[themeForLevel(G.level)] || THEME_ART.Forest; }
+
+function updateHUD() {
+  var lv = LEVELS[G.level - 1];
+  $("hudLevel").textContent = "Level " + G.level + " · " + themeForLevel(G.level);
+  $("hudTimer").textContent = "\u23F1 " + fmtTime(G.timeLeft);
+  $("hudTimer").classList.toggle("low", G.timeLeft <= 10 && G.state === "playing");
+  $("hudMoves").textContent = "Moves: " + G.movesLeft + " / " + lv.moves;
+  $("hudMoves").classList.toggle("low", G.movesLeft <= 1 && G.state === "playing");
+  $("hudCoinsNum").textContent = String(SAVE.coins);
+  var hintBtn = $("btnHint");
+  if (hintBtn) hintBtn.disabled = (SAVE.coins < HINT_COST);
+  var skipBtn = $("btnSkip");
+  if (skipBtn) skipBtn.disabled = (SAVE.coins < SKIP_COST || G.level >= TOTAL_LEVELS);
+}
+function updateMenu() {
+  $("menuCoins").textContent = String(SAVE.coins);
+  $("menuBest").textContent = String(SAVE.best || 0);
+  var done = 0, k;
+  for (k in SAVE.stars) if (SAVE.stars[k] > 0) done++;
+  $("menuDone").textContent = done + " / " + TOTAL_LEVELS;
+}
+function updateSoundUI() {
+  $("btnSound").textContent = SAVE.muted ? "\uD83D\uDD07 Sound: Off" : "\uD83D\uDD0A Sound: On";
+  var m = $("btnSoundMenu");
+  if (m) m.textContent = SAVE.muted ? "\uD83D\uDD07 Sound: Off" : "\uD83D\uDD0A Sound: On";
+}
+
+// ---------------------------------------------------------------------------
+// Game flow
+// ---------------------------------------------------------------------------
+function startGame(levelNum) {
+  var lv = LEVELS[levelNum - 1];
+  if (!lv) return;
+  G.level = levelNum;
+  SAVE.lastLevel = levelNum; persistSave();
+  G.st = newState(lv);
+  G.movesLeft = lv.moves; G.timeLeft = lv.time;
+  G.animating = false; G.anim = null; G.spinAnims = [];
+  G.hintCell = null; G.particles = []; G.shake = 0; G.flashCell = null;
+  G.coachDone = false;
+  // Level 1's coach tip promises a "glowing arrow" — light the solution
+  // arrow until the first tap so the promise is true (one solver call,
+  // ~1ms on L1). tapArrow clears hintCell on the first successful slide.
+  if (levelNum === 1) { var h0 = hintFromState(G.st); if (h0) G.hintCell = { x: h0.x, y: h0.y, dir: h0.dir }; }
+  G.cursor = { x: lv.start.x, y: lv.start.y };
+  setState("playing");
+  show($("menuOverlay"), false);
+  show($("levelsOverlay"), false);
+  show($("howtoOverlay"), false);
+  show($("pauseOverlay"), false);
+  show($("resultsOverlay"), false);
+  show($("hud"), true); show($("actionBar"), true);
+  updateHUD(); updateMenu();
+  var tip = COACH[levelNum];
+  var ct = $("coachTip");
+  if (tip) { ct.textContent = "\uD83D\uDCA1 " + tip; ct.classList.remove("hidden"); }
+  else ct.classList.add("hidden");
+  AudioSys.ensure();
+  Music.start();
+}
+function showMenu() {
+  setState("menu");
+  show($("resultsOverlay"), false);
+  Music.stop();
+  show($("pauseOverlay"), false);
+  show($("levelsOverlay"), false);
+  show($("howtoOverlay"), false);
+  show($("hud"), false); show($("actionBar"), false);
+  show($("coachTip"), false);
+  show($("menuOverlay"), true);
+  updateMenu();
+}
+function pauseGame() {
+  if (G.state !== "playing") return;
+  setState("paused");
+  $("pauseScore").textContent = String(G.score);
+  Music.stop();
+  show($("coachTip"), false);
+  show($("pauseOverlay"), true);
+}
+function resumeGame() {
+  if (G.state !== "paused") return;
+  setState("playing");
+  show($("pauseOverlay"), false);
+  var tip = COACH[G.level];
+  if (tip && !G.coachDone) { $("coachTip").textContent = "\uD83D\uDCA1 " + tip; $("coachTip").classList.remove("hidden"); }
+  // A slide can finish while paused (the animation keeps stepping) and
+  // its end-of-round timeout fires into the paused state and is skipped —
+  // without this re-check the win/loss was swallowed and the player was
+  // stuck on a finished board with no results screen.
+  if (!G.animating) {
+    if (G.st && G.st.won) endRound(true);
+    else if (G.movesLeft <= 0) endRound(false, "moves");
+    else if (G.timeLeft <= 0) endRound(false, "time");
+  }
+  AudioSys.ensure();
+  if (G.state === "playing") Music.start();
+}
+function restartLevel() {
+  AudioSys.click();
+  startGame(G.level);
+}
+function endRound(won, reason) {
+  if (G.state !== "playing") return;
+  Music.stop();
+  var lv = LEVELS[G.level - 1];
+  var movesUsed = lv.moves - G.movesLeft;
+  var title = $("resultsTitle"), starsRow = $("starsRow"), text = $("resultsText");
+  var coinsEl = $("resultsCoins"), scoreEl = $("resultsScore");
+  var btnNext = $("btnNext"), btnRetry = $("btnRetry");
+  if (won) {
+    var stars = starsFor(lv, movesUsed, lv.par);
+    var coins = coinsForWin(stars, G.movesLeft, Math.max(0, Math.ceil(G.timeLeft)));
+    var sc = scoreForWin(G.level, stars, G.movesLeft, Math.max(0, Math.ceil(G.timeLeft)));
+    G.score += sc;
+    SAVE.coins += coins;
+    SAVE.totalWins++;
+    if (!SAVE.stars[G.level] || SAVE.stars[G.level] < stars) SAVE.stars[G.level] = stars;
+    SAVE.unlocked = Math.max(SAVE.unlocked, Math.min(TOTAL_LEVELS, G.level + 1));
+    SAVE.score = G.score;
+    var isBest = G.score > SAVE.best;
+    if (isBest) SAVE.best = G.score;
+    persistSave();
+    AudioSys.win(); AudioSys.coin();
+    G.shake = 7;
+    burstConfetti();
+    title.textContent = G.level >= TOTAL_LEVELS ? "You Escaped Them All!" : "Level Complete!";
+    var sHtml = "";
+    for (var i = 0; i < 3; i++) sHtml += (i < stars) ? "<span class=\"starPop\" style=\"animation-delay:" + (i * 140) + "ms\">\u2605</span>" : "<span class=\"dim\">\u2605</span>";
+    starsRow.innerHTML = sHtml;
+    text.textContent = "Solved in " + movesUsed + " move" + (movesUsed === 1 ? "" : "s") +
+      " (par " + lv.par + ") with " + Math.max(0, Math.ceil(G.timeLeft)) + "s to spare. " +
+      themeForLevel(G.level) + " cleared!";
+    coinsEl.textContent = "+" + coins;
+    scoreEl.textContent = "+" + sc + "  (total " + G.score + ")";
+    btnNext.textContent = G.level >= TOTAL_LEVELS ? "Level Select" : "Next Level";
+    btnNext.classList.remove("hidden");
+    btnRetry.classList.remove("hidden");
+    announce("Level " + G.level + " complete! " + stars + " stars, " + coins + " coins.");
+  } else {
+    AudioSys.lose();
+    title.textContent = reason === "time" ? "Time's Up!" : (reason === "moves" ? "Out of Moves!" : "Level Failed");
+    starsRow.innerHTML = "";
+    text.textContent = reason === "time"
+      ? "The clock hit zero on Level " + G.level + ". Watch the timer — and Hint can save a run!"
+      : "No moves left on Level " + G.level + ". Every slide counts — plan the route first!";
+    coinsEl.textContent = "+0";
+    scoreEl.textContent = String(G.score);
+    btnNext.classList.add("hidden");
+    btnRetry.classList.remove("hidden");
+    announce("Level failed. " + (reason === "time" ? "Time ran out." : "Out of moves."));
+  }
+  setState("results");
+  show($("coachTip"), false);
+  show($("resultsOverlay"), true);
+  updateHUD(); updateMenu();
+}
+
+// ---------------------------------------------------------------------------
+// Input: tap an arrow tile -> slide
+// ---------------------------------------------------------------------------
+function tapArrow(cx, cy) {
+  // No input once the round is already decided: a winning slide locks the
+  // win during its 280ms end-delay, and no slide may start on 0 moves
+  // (the loss is already pending). Without these, fast taps in the
+  // end-delay window could slide the hero off the exit or drive moves
+  // negative and corrupt the result.
+  if (G.state !== "playing" || G.animating || G.movesLeft <= 0 || (G.st && G.st.won)) return false;
+  var st = G.st;
+  var k = cellKey(cx, cy);
+  var a = st.arrows[k];
+  if (!a) return false;
+  if (st.ice[k]) {
+    toast("That arrow is under ice — shove the ice away first!");
+    AudioSys.invalid();
+    return false;
+  }
+  var res = slide(st, a.dir);
+  if (!res.ok) {
+    G.flashCell = { x: cx, y: cy }; G.flashUntil = performance.now() + 350;
+    G.shake = 2;
+    AudioSys.invalid();
+    announce("Blocked! That slide goes nowhere.");
+    return false;
+  }
+  var from = { x: st.hx, y: st.hy };
+  G.st = res.state;
+  G.movesLeft = res.state.movesLeft;
+  G.animating = true;
+  G.anim = { path: res.path, from: from, t: 0, dur: Math.min(420, 130 + res.path.length * 45) };
+  G.spinAnims = res.rotated.map(function (r) { return { x: r.x, y: r.y, from: r.from, to: r.to, t: 0, dur: 280 }; });
+  G.iceAnims = res.pushed.map(function (p) { return { from: p.from, to: p.to, t: 0, dur: 260 }; });
+  G.hintCell = null;
+  if (!G.coachDone) { G.coachDone = true; show($("coachTip"), false); }
+  AudioSys.slide();
+  if (res.rotated.length) setTimeout(function () { AudioSys.rotate(); }, 130);
+  if (res.collectedKey) {
+    AudioSys.key();
+    spawnSparkle(cellCenter(cx, cy), "#ffd166", 12);
+    toast("Key collected — the locks are open!");
+  }
+  if (res.teleports) AudioSys.portal();
+  if (res.pushed.length) AudioSys.noise(0.12, 0.08);
+  spawnDust(cellCenter(from.x, from.y));
+  updateHUD();
+  return true;
+}
+function useHint() {
+  if (G.state !== "playing" || G.animating) return;
+  if (SAVE.coins < HINT_COST) {
+    toast("Not enough coins — win levels to earn more!");
+    var b = $("btnHint"); if (b) { b.classList.remove("shake"); void b.offsetWidth; b.classList.add("shake"); }
+    AudioSys.invalid();
+    return;
+  }
+  var h = hintFromState(G.st);
+  if (!h) {
+    toast("No way out from here — Restart is free!");
+    AudioSys.invalid();
+    return;
+  }
+  SAVE.coins -= HINT_COST; persistSave();
+  G.hintCell = { x: h.x, y: h.y, dir: h.dir };
+  G.cursor = { x: h.x, y: h.y };
+  AudioSys.coin();
+  toast("Try the glowing arrow — it points " + ["right", "down", "left", "up"][h.dir] + "!");
+  announce("Hint: tap the glowing arrow.");
+  updateHUD();
+}
+function useSkip() {
+  if (G.state !== "playing" || G.level >= TOTAL_LEVELS) return;
+  if (SAVE.coins < SKIP_COST) {
+    toast("Not enough coins — win levels to earn more!");
+    var b = $("btnSkip"); if (b) { b.classList.remove("shake"); void b.offsetWidth; b.classList.add("shake"); }
+    AudioSys.invalid();
+    return;
+  }
+  SAVE.coins -= SKIP_COST;
+  SAVE.unlocked = Math.max(SAVE.unlocked, Math.min(TOTAL_LEVELS, G.level + 1));
+  persistSave();
+  AudioSys.coin();
+  toast("Skipped — Level " + (G.level + 1) + " unlocked!");
+  startGame(G.level + 1);
+}
+function heroRenderPos() {
+  if (G.anim) {
+    var total = G.anim.path.length;
+    var per = G.anim.dur / total;
+    var idx = Math.min(total - 1, Math.floor(G.anim.t / per));
+    var frac = (G.anim.t - idx * per) / per;
+    var fromCell = idx === 0 ? G.anim.from : G.anim.path[idx - 1];
+    var toCell = G.anim.path[idx];
+    var fx = fromCell.x + (toCell.x - fromCell.x) * frac;
+    var fy = fromCell.y + (toCell.y - fromCell.y) * frac;
+    var g = boardGeom();
+    return { x: g.ox + fx * g.cell + g.cell / 2, y: g.oy + fy * g.cell + g.cell / 2 };
+  }
+  return cellCenter(G.st.hx, G.st.hy);
+}
+
+// ---------------------------------------------------------------------------
+// Particles + ambient decor
+// ---------------------------------------------------------------------------
+function spawnDust(p) {
+  for (var i = 0; i < 6; i++) {
+    G.particles.push({ x: p.x, y: p.y, vx: (Math.random() - 0.5) * 130, vy: (Math.random() - 0.5) * 130, life: 0.4, max: 0.4, size: 3 + Math.random() * 3, color: "#ffffff", grav: 0 });
+  }
+}
+function spawnSparkle(p, color, n) {
+  for (var i = 0; i < n; i++) {
+    var a = Math.random() * Math.PI * 2, sp = 40 + Math.random() * 120;
+    G.particles.push({ x: p.x, y: p.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40, life: 0.7, max: 0.7, size: 2 + Math.random() * 3, color: color, grav: 160 });
+  }
+}
+function burstConfetti() {
+  for (var i = 0; i < 80; i++) {
+    // 32 of 80 are gold coins (deterministic count, for tests): the win
+    // burst rains coins, the rest are coloured confetti dots.
+    var isCoin = (i % 5 < 2);
+    G.particles.push({ x: 480 + (Math.random() - 0.5) * 200, y: 250 + (Math.random() - 0.5) * 80,
+      vx: (Math.random() - 0.5) * 460, vy: -Math.random() * 380 - 60,
+      life: 1.2 + Math.random() * 0.5, max: 1.5, size: 4 + Math.random() * 5,
+      color: isCoin ? "#ffd94d" : HERO_COLORS[i % HERO_COLORS.length], grav: 520,
+      kind: isCoin ? "coin" : "dot" });
+  }
+}
+function updateParticles(dt) {
+  for (var i = G.particles.length - 1; i >= 0; i--) {
+    var p = G.particles[i];
+    p.life -= dt;
+    if (p.life <= 0) { G.particles.splice(i, 1); continue; }
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    if (p.grav) p.vy += p.grav * dt;
+  }
+}
+function updateDecor(dt) {
+  var art = themeArt();
+  var cap = art.deco === "city" ? 0 : 26;
+  while (G.decor.length < cap) {
+    var kind = art.deco;
+    if (kind === "snow") G.decor.push({ x: Math.random() * 960, y: -10, vy: 22 + Math.random() * 30, vx: (Math.random() - 0.5) * 12, s: 2 + Math.random() * 3 });
+    else if (kind === "embers") G.decor.push({ x: 60 + Math.random() * 840, y: 610, vy: -(26 + Math.random() * 46), vx: (Math.random() - 0.5) * 16, s: 2 + Math.random() * 3 });
+    else if (kind === "bubbles") G.decor.push({ x: Math.random() * 960, y: 610, vy: -(20 + Math.random() * 30), vx: (Math.random() - 0.5) * 10, s: 2 + Math.random() * 4 });
+    else if (kind === "trees") G.decor.push({ x: Math.random() * 960, y: Math.random() * 600, vy: -6 - Math.random() * 8, vx: (Math.random() - 0.5) * 8, s: 1.5 + Math.random() * 2 });
+    else if (kind === "dunes") G.decor.push({ x: Math.random() * 960, y: 420 + Math.random() * 180, vy: 0, vx: 14 + Math.random() * 22, s: 1.5 + Math.random() * 2 });
+    else G.decor.push({ x: Math.random() * 960, y: Math.random() * 600, vy: 0, vx: 0, s: 2 });
+  }
+  for (var i = G.decor.length - 1; i >= 0; i--) {
+    var d = G.decor[i];
+    d.x += d.vx * dt; d.y += d.vy * dt;
+    if (d.y < -14 || d.y > 614 || d.x < -14 || d.x > 974) G.decor.splice(i, 1);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame update (fixed-ish timestep via rAF dt)
+// ---------------------------------------------------------------------------
+var _lastTimerShown = -1;
+function stepGame(dt) {
+  if (dt > 0.25) dt = 0.25;
+  if (G.state === "playing") {
+    G.timeLeft -= dt;
+    if (G.timeLeft <= 0) {
+      G.timeLeft = 0;
+      // A winning slide whose clock died mid-slide must still win: the
+      // animation-end branch schedules the win 280ms after the slide, and
+      // without this guard the very next frame's timer check would steal
+      // it with "Time's Up!" before the win timeout fires.
+      if (!G.animating && !(G.st && G.st.won)) endRound(false, "time");
+    }
+    var shown = Math.ceil(G.timeLeft);
+    if (shown !== _lastTimerShown) { _lastTimerShown = shown; updateHUD(); }
+  }
+  if (G.anim) {
+    G.anim.t += dt * 1000;
+    if (G.anim.t >= G.anim.dur) {
+      G.anim = null; G.animating = false;
+      // The end of the round is decided 220-280ms after the slide, so a
+      // Restart/Skip/new slide inside that window must NOT let the stale
+      // timeout fire on the fresh state (it once declared a just-restarted
+      // level lost). Capture this slide's state object and re-validate it.
+      var stAtEnd = G.st;
+      if (G.st.won) { setTimeout(function () { if (G.state === "playing" && G.st === stAtEnd) endRound(true); }, 280); }
+      else if (G.movesLeft <= 0) { setTimeout(function () { if (G.state === "playing" && G.st === stAtEnd) endRound(false, "moves"); }, 220); }
+      else if (G.timeLeft <= 0) { setTimeout(function () { if (G.state === "playing" && G.st === stAtEnd) endRound(false, "time"); }, 220); }
+      else if (G.movesLeft <= 3) {
+        // Dead-state check is a full solver search (up to ~230ms on late
+        // levels) — only run it when few moves remain (<=2ms there) and
+        // off the animation-completion frame so slides never hitch.
+        setTimeout(function () {
+          if (G.state === "playing" && !G.animating && G.st && isDeadState(G.st)) {
+            toast("No way out from here — Restart is free!");
+            announce("No solution from this position. Restart is free.");
+          }
+        }, 60);
+      }
+    }
+  }
+  var i;
+  for (i = G.spinAnims.length - 1; i >= 0; i--) {
+    G.spinAnims[i].t += dt * 1000;
+    if (G.spinAnims[i].t >= G.spinAnims[i].dur) G.spinAnims.splice(i, 1);
+  }
+  if (G.iceAnims) for (i = G.iceAnims.length - 1; i >= 0; i--) {
+    G.iceAnims[i].t += dt * 1000;
+    if (G.iceAnims[i].t >= G.iceAnims[i].dur) G.iceAnims.splice(i, 1);
+  }
+  updateParticles(dt);
+  updateDecor(dt);
+  if (G.shake > 0) G.shake = Math.max(0, G.shake - dt * 24);
+  if (G.flashCell && performance.now() > G.flashUntil) G.flashCell = null;
+}
+
+// ---------------------------------------------------------------------------
+// Rendering — everything is drawn in code (no images)
+// ---------------------------------------------------------------------------
+function rr(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+// --- gold coin asset (code-drawn, no image) --------------------------------
+// One coin design used everywhere: canvas draws it via drawCoin(), DOM
+// spots use the matching inline SVG (gradient #coinGold in the defs block).
+// Gold radial gradient (game palette #ffd166), dark rim, inner ring,
+// embossed star, white shine arc top-left — crisp down to ~16px.
+function drawStarShape(ctx, cx, cy, R, r) {
+  ctx.beginPath();
+  for (var i = 0; i < 10; i++) {
+    var a = -Math.PI / 2 + i * Math.PI / 5;
+    var rad = (i % 2 === 0) ? R : r;
+    var px = cx + Math.cos(a) * rad, py = cy + Math.sin(a) * rad;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fillStyle = "#fff3b0"; ctx.fill();
+  ctx.lineWidth = Math.max(0.6, R * 0.12); ctx.strokeStyle = "#d99a1f";
+  ctx.lineJoin = "round"; ctx.stroke();
+}
+function drawCoin(ctx, x, y, r, spin) {
+  ctx.save();
+  ctx.translate(x, y);
+  // spin: -1..1 — squash X so a coin particle tumbles as it falls.
+  if (spin !== undefined && spin !== null) ctx.scale(Math.max(0.15, Math.abs(spin)), 1);
+  var g = ctx.createRadialGradient(-r * 0.35, -r * 0.4, r * 0.1, 0, 0, r);
+  g.addColorStop(0, "#fff3b0"); g.addColorStop(0.45, "#ffd94d");
+  g.addColorStop(0.8, "#f5a623"); g.addColorStop(1, "#d18a12");
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, 7); ctx.fillStyle = g; ctx.fill();
+  ctx.lineWidth = Math.max(1, r * 0.14); ctx.strokeStyle = "#b97a0e"; ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, 0, r * 0.62, 0, 7);
+  ctx.lineWidth = Math.max(1, r * 0.09); ctx.strokeStyle = "#c98f1b"; ctx.stroke();
+  drawStarShape(ctx, 0, 0, r * 0.42, r * 0.18);
+  ctx.beginPath(); ctx.arc(0, 0, r * 0.68, Math.PI * 1.1, Math.PI * 1.45);
+  ctx.lineWidth = Math.max(1, r * 0.13); ctx.strokeStyle = "rgba(255,255,255,0.9)";
+  ctx.lineCap = "round"; ctx.stroke();
+  ctx.restore();
+}
+function drawArrowGlyph(cx, cy, size, dir, color) {
+  // Bold arrow, drawn pointing right then rotated to dir.
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(dir * Math.PI / 2);
+  ctx.fillStyle = color;
+  var s = size;
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.45, -s * 0.22);
+  ctx.lineTo(s * 0.05, -s * 0.22);
+  ctx.lineTo(s * 0.05, -s * 0.42);
+  ctx.lineTo(s * 0.5, 0);
+  ctx.lineTo(s * 0.05, s * 0.42);
+  ctx.lineTo(s * 0.05, s * 0.22);
+  ctx.lineTo(-s * 0.45, s * 0.22);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+function drawBackground(now) {
+  var art = themeArt();
+  var g = ctx.createLinearGradient(0, 0, 0, 600);
+  g.addColorStop(0, art.bg[0]); g.addColorStop(0.55, art.bg[1]); g.addColorStop(1, art.bg[2]);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 960, 600);
+  var t = now / 1000;
+  if (art.deco === "trees") {
+    ctx.fillStyle = "rgba(10, 40, 24, 0.85)";
+    var tx;
+    for (tx = 0; tx < 5; tx++) {
+      var x = 20 + tx * 48;
+      ctx.beginPath(); ctx.moveTo(x, 600); ctx.lineTo(x + 22, 470); ctx.lineTo(x + 44, 600); ctx.closePath(); ctx.fill();
+      ctx.fillRect(x + 18, 596, 8, 10);
+    }
+    for (tx = 0; tx < 4; tx++) {
+      var x2 = 780 + tx * 48;
+      ctx.beginPath(); ctx.moveTo(x2, 600); ctx.lineTo(x2 + 22, 500); ctx.lineTo(x2 + 44, 600); ctx.closePath(); ctx.fill();
+    }
+    ctx.fillStyle = "rgba(184,255,158,0.7)";
+    G.decor.forEach(function (d) { ctx.globalAlpha = 0.4 + 0.3 * Math.sin(t * 2 + d.x); ctx.beginPath(); ctx.arc(d.x, d.y, d.s, 0, 7); ctx.fill(); });
+    ctx.globalAlpha = 1;
+  } else if (art.deco === "snow") {
+    ctx.fillStyle = "rgba(16, 32, 56, 0.9)";
+    for (var px = 0; px < 4; px++) {
+      var x = 30 + px * 60;
+      ctx.beginPath(); ctx.moveTo(x, 600); ctx.lineTo(x + 20, 500); ctx.lineTo(x + 40, 600); ctx.closePath(); ctx.fill();
+    }
+    for (var px2 = 0; px2 < 3; px2++) {
+      var x3 = 800 + px2 * 56;
+      ctx.beginPath(); ctx.moveTo(x3, 600); ctx.lineTo(x3 + 20, 520); ctx.lineTo(x3 + 40, 600); ctx.closePath(); ctx.fill();
+    }
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    G.decor.forEach(function (d) { ctx.beginPath(); ctx.arc(d.x, d.y, d.s, 0, 7); ctx.fill(); });
+  } else if (art.deco === "embers") {
+    var lg = ctx.createRadialGradient(480, 620, 40, 480, 620, 420);
+    lg.addColorStop(0, "rgba(255,110,30,0.5)"); lg.addColorStop(1, "rgba(255,110,30,0)");
+    ctx.fillStyle = lg; ctx.fillRect(0, 0, 960, 600);
+    ctx.fillStyle = "rgba(255,150,60,0.9)";
+    G.decor.forEach(function (d) { ctx.globalAlpha = 0.5 + 0.4 * Math.sin(t * 3 + d.x); ctx.beginPath(); ctx.arc(d.x, d.y, d.s, 0, 7); ctx.fill(); });
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = "rgba(20, 8, 5, 0.9)";
+    ctx.beginPath(); ctx.moveTo(0, 600); ctx.lineTo(0, 560); ctx.quadraticCurveTo(240, 520, 480, 566); ctx.quadraticCurveTo(720, 600, 960, 548); ctx.lineTo(960, 600); ctx.closePath(); ctx.fill();
+  } else if (art.deco === "city") {
+    ctx.fillStyle = "rgba(8, 5, 20, 0.9)";
+    var bw = [90, 70, 110, 80, 100, 70, 90];
+    var bx = 0, bi;
+    for (bi = 0; bi < bw.length; bi++) {
+      var bh = 130 + ((bi * 67) % 150);
+      ctx.fillRect(bx, 600 - bh, bw[bi] - 8, bh);
+      ctx.fillStyle = "rgba(255,220,120,0.75)";
+      for (var wy = 600 - bh + 14; wy < 580; wy += 26) {
+        for (var wx = bx + 10; wx < bx + bw[bi] - 18; wx += 22) {
+          if (((wx * 7 + wy * 13 + bi) % 5) < 2) ctx.fillRect(wx, wy, 9, 12);
+        }
+      }
+      ctx.fillStyle = "rgba(8, 5, 20, 0.9)";
+      bx += bw[bi];
+    }
+    ctx.fillStyle = "rgba(255,92,225,0.10)";
+    ctx.fillRect(0, 0, 960, 600);
+  } else if (art.deco === "dunes") {
+    ctx.fillStyle = "rgba(255,190,90,0.85)";
+    ctx.beginPath(); ctx.arc(830, 110, 42, 0, 7); ctx.fill();
+    ctx.fillStyle = "rgba(40, 26, 10, 0.9)";
+    ctx.beginPath(); ctx.moveTo(0, 600); ctx.quadraticCurveTo(300, 470, 620, 560); ctx.quadraticCurveTo(820, 610, 960, 540); ctx.lineTo(960, 600); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "rgba(30, 20, 8, 0.9)";
+    ctx.beginPath(); ctx.moveTo(60, 600); ctx.quadraticCurveTo(200, 540, 360, 580); ctx.lineTo(360, 600); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "rgba(255,209,102,0.5)";
+    G.decor.forEach(function (d) { ctx.beginPath(); ctx.arc(d.x, d.y, d.s, 0, 7); ctx.fill(); });
+  } else if (art.deco === "bubbles") {
+    ctx.strokeStyle = "rgba(92,225,230,0.18)"; ctx.lineWidth = 10;
+    for (var wv = 0; wv < 3; wv++) {
+      ctx.beginPath();
+      for (var wx = 0; wx <= 960; wx += 16) ctx.lineTo(wx, 540 + wv * 22 + Math.sin(wx / 90 + t + wv * 2) * 8);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "rgba(92,225,230,0.12)";
+    ctx.beginPath(); ctx.moveTo(120, 0); ctx.lineTo(260, 0); ctx.lineTo(180, 600); ctx.lineTo(60, 600); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = "rgba(174,230,255,0.7)"; ctx.lineWidth = 1.5;
+    G.decor.forEach(function (d) { ctx.beginPath(); ctx.arc(d.x, d.y, d.s, 0, 7); ctx.stroke(); });
+  }
+}
+function drawBoard(now) {
+  var lv = LEVELS[G.level - 1];
+  var art = themeArt();
+  var g = boardGeom();
+  var t = now / 1000;
+  // frame
+  ctx.save();
+  ctx.shadowColor = art.glow; ctx.shadowBlur = 24;
+  ctx.fillStyle = art.frame;
+  rr(g.ox - 10, g.oy - 10, g.bw + 20, g.bh + 20, 18); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  rr(g.ox - 4, g.oy - 4, g.bw + 8, g.bh + 8, 14); ctx.fill();
+  // floor tiles
+  var x, y;
+  for (y = 0; y < lv.h; y++) for (x = 0; x < lv.w; x++) {
+    ctx.fillStyle = ((x + y) % 2 === 0) ? art.tile : art.tileAlt;
+    rr(g.ox + x * g.cell + 2, g.oy + y * g.cell + 2, g.cell - 4, g.cell - 4, 8); ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.05)";
+    rr(g.ox + x * g.cell + 2, g.oy + y * g.cell + 2, g.cell - 4, (g.cell - 4) / 2, 8); ctx.fill();
+  }
+  var maps = levelMaps(lv);
+  var st = G.st;
+  var k;
+  // exit (pulsing glow)
+  var ex = cellCenter(lv.exit.x, lv.exit.y);
+  var pulse = 0.75 + 0.25 * Math.sin(t * 4);
+  ctx.save();
+  ctx.shadowColor = "#2eff8a"; ctx.shadowBlur = 22 * pulse;
+  ctx.fillStyle = "#0d5c2e";
+  rr(ex.x - g.cell * 0.46, ex.y - g.cell * 0.46, g.cell * 0.92, g.cell * 0.92, 10); ctx.fill();
+  ctx.restore();
+  ctx.strokeStyle = "#2eff8a"; ctx.lineWidth = 3;
+  rr(ex.x - g.cell * 0.46, ex.y - g.cell * 0.46, g.cell * 0.92, g.cell * 0.92, 10); ctx.stroke();
+  ctx.fillStyle = "#baffcf";
+  ctx.font = "900 " + Math.max(11, Math.floor(g.cell * 0.2)) + "px 'Trebuchet MS', sans-serif";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("EXIT", ex.x, ex.y);
+  // portals
+  (lv.portals || []).forEach(function (pair, pi) {
+    var col = pi === 0 ? "#b388ff" : "#5ce1e6";
+    pair.forEach(function (p) {
+      var c = cellCenter(p.x, p.y);
+      ctx.save();
+      ctx.shadowColor = col; ctx.shadowBlur = 14;
+      ctx.strokeStyle = col; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(c.x, c.y, g.cell * 0.3, t * 2, t * 2 + Math.PI * 1.5); ctx.stroke();
+      ctx.beginPath(); ctx.arc(c.x, c.y, g.cell * 0.18, -t * 3, -t * 3 + Math.PI * 1.2); ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.arc(c.x, c.y, g.cell * 0.08, 0, 7); ctx.fill();
+    });
+  });
+  // locks + keys
+  (lv.locks || []).forEach(function (p) {
+    if (st && st.locksOpen) return; // open locks are plain floor
+    var c = cellCenter(p.x, p.y);
+    ctx.fillStyle = "#c98a1b";
+    rr(c.x - g.cell * 0.4, c.y - g.cell * 0.4, g.cell * 0.8, g.cell * 0.8, 8); ctx.fill();
+    ctx.strokeStyle = "#7a5200"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(c.x, c.y - g.cell * 0.06, g.cell * 0.16, Math.PI, 0); ctx.stroke();
+    ctx.fillStyle = "#7a5200";
+    rr(c.x - g.cell * 0.14, c.y - g.cell * 0.06, g.cell * 0.28, g.cell * 0.26, 4); ctx.fill();
+  });
+  (lv.keys || []).forEach(function (p) {
+    if (st && st.keyTaken) return;
+    var c = cellCenter(p.x, p.y);
+    var bob = Math.sin(t * 3 + p.x) * 2;
+    ctx.save();
+    ctx.shadowColor = "#ffd166"; ctx.shadowBlur = 12;
+    ctx.strokeStyle = "#ffd166"; ctx.lineWidth = 4; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.arc(c.x - g.cell * 0.12, c.y + bob, g.cell * 0.13, 0, 7); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(c.x, c.y + bob); ctx.lineTo(c.x + g.cell * 0.3, c.y + bob); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(c.x + g.cell * 0.2, c.y + bob); ctx.lineTo(c.x + g.cell * 0.2, c.y + g.cell * 0.16 + bob); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(c.x + g.cell * 0.3, c.y + bob); ctx.lineTo(c.x + g.cell * 0.3, c.y + g.cell * 0.12 + bob); ctx.stroke();
+    ctx.restore();
+  });
+  // stones
+  (lv.stones || []).forEach(function (p) {
+    var c = cellCenter(p.x, p.y);
+    ctx.fillStyle = "#7d8394";
+    rr(c.x - g.cell * 0.44, c.y - g.cell * 0.44, g.cell * 0.88, g.cell * 0.88, 8); ctx.fill();
+    ctx.fillStyle = "#9aa0b0";
+    rr(c.x - g.cell * 0.44, c.y - g.cell * 0.44, g.cell * 0.88, g.cell * 0.3, 8); ctx.fill();
+    ctx.strokeStyle = "rgba(40,44,60,0.85)"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(c.x - g.cell * 0.28, c.y - g.cell * 0.28); ctx.lineTo(c.x - g.cell * 0.08, c.y - g.cell * 0.05); ctx.lineTo(c.x - g.cell * 0.18, c.y + g.cell * 0.12); ctx.lineTo(c.x + g.cell * 0.05, c.y + g.cell * 0.28); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(c.x + g.cell * 0.3, c.y - g.cell * 0.2); ctx.lineTo(c.x + g.cell * 0.12, c.y - g.cell * 0.02); ctx.lineTo(c.x + g.cell * 0.22, c.y + g.cell * 0.18); ctx.stroke();
+  });
+  // ice blocks (with push animation)
+  var iceAnimsByTo = {};
+  (G.iceAnims || []).forEach(function (ia) {
+    var f = Math.min(1, ia.t / ia.dur);
+    var e = 1 - Math.pow(1 - f, 3);
+    iceAnimsByTo[cellKey(ia.to.x, ia.to.y)] = { x: ia.from.x + (ia.to.x - ia.from.x) * e, y: ia.from.y + (ia.to.y - ia.from.y) * e };
+  });
+  var iceKeys = st ? Object.keys(st.ice) : (lv.ice || []).map(function (p) { return cellKey(p.x, p.y); });
+  iceKeys.forEach(function (ik) {
+    var parts = ik.split(",");
+    var ix = parseInt(parts[0], 10), iy = parseInt(parts[1], 10);
+    var pos = iceAnimsByTo[ik] ? iceAnimsByTo[ik] : { x: ix, y: iy };
+    var c = { x: g.ox + pos.x * g.cell + g.cell / 2, y: g.oy + pos.y * g.cell + g.cell / 2 };
+    ctx.save();
+    ctx.globalAlpha = 0.92;
+    ctx.fillStyle = "#aee6ff";
+    rr(c.x - g.cell * 0.44, c.y - g.cell * 0.44, g.cell * 0.88, g.cell * 0.88, 8); ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.75)";
+    ctx.beginPath(); ctx.moveTo(c.x - g.cell * 0.3, c.y + g.cell * 0.1); ctx.lineTo(c.x + g.cell * 0.1, c.y - g.cell * 0.3); ctx.lineTo(c.x + g.cell * 0.3, c.y - g.cell * 0.1); ctx.lineTo(c.x - g.cell * 0.1, c.y + g.cell * 0.3); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  });
+  // arrows (gold tiles; spin while rotating; red flash when blocked)
+  var arrows = st ? st.arrows : maps.arrows;
+  for (k in arrows) {
+    var a = arrows[k];
+    var c = cellCenter(a.x, a.y);
+    var spin = null;
+    for (var si = 0; si < G.spinAnims.length; si++) if (G.spinAnims[si].x === a.x && G.spinAnims[si].y === a.y) { spin = G.spinAnims[si]; break; }
+    var covered = st && st.ice[k];
+    var isFlash = G.flashCell && G.flashCell.x === a.x && G.flashCell.y === a.y && now < G.flashUntil;
+    var isHint = G.hintCell && G.hintCell.x === a.x && G.hintCell.y === a.y;
+    ctx.save();
+    if (covered) ctx.globalAlpha = 0.45;
+    ctx.shadowColor = isHint ? "#ffd94d" : "rgba(0,0,0,0.4)";
+    ctx.shadowBlur = isHint ? 18 : 6;
+    ctx.fillStyle = isFlash ? "#ff5d5d" : "#f5b301";
+    rr(c.x - g.cell * 0.44, c.y - g.cell * 0.44, g.cell * 0.88, g.cell * 0.88, 9); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = "rgba(255,255,255,0.35)";
+    rr(c.x - g.cell * 0.44, c.y - g.cell * 0.44, g.cell * 0.88, g.cell * 0.3, 9); ctx.fill();
+    var ang = a.dir;
+    if (spin) {
+      var f = Math.min(1, spin.t / spin.dur);
+      var steps = (spin.to - spin.from + 4) % 4;
+      ang = spin.from + steps * f;
+    }
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.rotate(((ang % 4) * Math.PI) / 2);
+    ctx.translate(-c.x, -c.y);
+    drawArrowGlyph(c.x, c.y, g.cell * 0.62, 0, "#1d2b52");
+    ctx.restore();
+    if (isHint) {
+      ctx.save();
+      ctx.strokeStyle = "#fff3b0"; ctx.lineWidth = 3 + 1.5 * Math.sin(t * 6);
+      rr(c.x - g.cell * 0.48, c.y - g.cell * 0.48, g.cell * 0.96, g.cell * 0.96, 10); ctx.stroke();
+      ctx.restore();
+    }
+  }
+  // keyboard cursor
+  if (G.state === "playing" && G.usedKeyboard) {
+    var cc = cellCenter(G.cursor.x, G.cursor.y);
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,255,0.9)"; ctx.lineWidth = 2.5;
+    ctx.setLineDash([6, 5]);
+    rr(cc.x - g.cell * 0.48, cc.y - g.cell * 0.48, g.cell * 0.96, g.cell * 0.96, 10); ctx.stroke();
+    ctx.restore();
+  }
+  // hero cube
+  if (st) {
+    var hp = heroRenderPos();
+    var heroColor = HERO_COLORS[(G.level - 1) % HERO_COLORS.length];
+    var bob = Math.sin(t * 3) * 2;
+    var hs = g.cell * 0.78;
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 10; ctx.shadowOffsetY = 4;
+    var hg = ctx.createLinearGradient(hp.x, hp.y - hs / 2, hp.x, hp.y + hs / 2);
+    hg.addColorStop(0, heroColor); hg.addColorStop(1, shadeColor(heroColor, -28));
+    ctx.fillStyle = hg;
+    rr(hp.x - hs / 2, hp.y - hs / 2 + bob, hs, hs, 12); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = "rgba(255,255,255,0.35)";
+    rr(hp.x - hs / 2, hp.y - hs / 2 + bob, hs, hs * 0.32, 12); ctx.fill();
+    // face
+    var ex1 = hp.x - hs * 0.2, ex2 = hp.x + hs * 0.2, ey = hp.y - hs * 0.08 + bob;
+    ctx.fillStyle = "#fff";
+    ctx.beginPath(); ctx.arc(ex1, ey, hs * 0.11, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(ex2, ey, hs * 0.11, 0, 7); ctx.fill();
+    ctx.fillStyle = "#1d2b52";
+    ctx.beginPath(); ctx.arc(ex1 + hs * 0.03, ey + hs * 0.02, hs * 0.055, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(ex2 + hs * 0.03, ey + hs * 0.02, hs * 0.055, 0, 7); ctx.fill();
+    ctx.strokeStyle = "#1d2b52"; ctx.lineWidth = Math.max(2, hs * 0.045); ctx.lineCap = "round";
+    ctx.beginPath(); ctx.arc(hp.x, hp.y + hs * 0.1 + bob, hs * 0.16, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+  }
+  // theme label on the board frame
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.font = "800 13px 'Trebuchet MS', sans-serif";
+  ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+  ctx.fillText(themeForLevel(G.level) + "  ·  Level " + G.level + "  ·  par " + lv.par, g.ox - 6, g.oy - 16);
+}
+function shadeColor(hex, amt) {
+  var n = parseInt(hex.slice(1), 16);
+  var r = Math.max(0, Math.min(255, (n >> 16) + amt));
+  var gg = Math.max(0, Math.min(255, ((n >> 8) & 255) + amt));
+  var b = Math.max(0, Math.min(255, (n & 255) + amt));
+  return "rgb(" + r + "," + gg + "," + b + ")";
+}
+function drawParticles() {
+  G.particles.forEach(function (p) {
+    ctx.globalAlpha = Math.max(0, p.life / p.max);
+    if (p.kind === "coin") {
+      // Spinning gold coin: squash X as it tumbles through the air.
+      var spin = Math.cos((1 - p.life / p.max) * Math.PI * 4);
+      drawCoin(ctx, p.x, p.y, p.size, spin);
+    } else {
+      ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, 7); ctx.fill();
+    }
+  });
+  ctx.globalAlpha = 1;
+}
+function draw() {
+  var now = performance.now();
+  ctx.clearRect(0, 0, 960, 600);
+  ctx.save();
+  if (G.shake > 0) ctx.translate((Math.random() - 0.5) * G.shake, (Math.random() - 0.5) * G.shake);
+  drawBackground(now);
+  if (G.st) drawBoard(now);
+  drawParticles();
+  ctx.restore();
+}
+function loop(ts) {
+  var dt = G.lastTs ? (ts - G.lastTs) / 1000 : 0.016;
+  G.lastTs = ts;
+  stepGame(dt);
+  draw();
+  // Self-healing music: a portal SDK unmute (or an ad finishing) can
+  // clear a mute flag while a level is in progress; restart the loop so
+  // the music comes back without waiting for the next level. start()
+  // early-returns when the timer already runs, so this costs nothing.
+  if (G.state === "playing") Music.start();
+  requestAnimationFrame(loop);
+}
+
+// ---------------------------------------------------------------------------
+// Input wiring (pointer + keyboard)
+// ---------------------------------------------------------------------------
+function canvasCellFromEvent(e) {
+  var r = canvas.getBoundingClientRect();
+  // The canvas is object-fit:contain, so when the element box is not
+  // 16:10 the 960x600 bitmap is letterboxed inside it — map through
+  // the displayed rect, not the element box.
+  var scale = Math.min(r.width / 960, r.height / 600);
+  var ox = (r.width - 960 * scale) / 2, oy = (r.height - 600 * scale) / 2;
+  var cx = (e.clientX - r.left - ox) / scale;
+  var cy = (e.clientY - r.top - oy) / scale;
+  var g = boardGeom();
+  var lv = LEVELS[G.level - 1];
+  var gx = Math.floor((cx - g.ox) / g.cell), gy = Math.floor((cy - g.oy) / g.cell);
+  if (gx < 0 || gy < 0 || gx >= lv.w || gy >= lv.h) return null;
+  return { x: gx, y: gy };
+}
+canvas.addEventListener("pointerdown", function (e) {
+  e.preventDefault();
+  AudioSys.ensure();
+  G.usedKeyboard = false;
+  if (G.state !== "playing") return;
+  var cell = canvasCellFromEvent(e);
+  if (!cell) return;
+  G.cursor = { x: cell.x, y: cell.y };
+  tapArrow(cell.x, cell.y);
+});
+document.addEventListener("keydown", function (e) {
+  if (e.key === "m" || e.key === "M") { toggleMute(); return; }
+  if (G.state === "playing") {
+    if (e.key === "p" || e.key === "P") { pauseGame(); return; }
+    if (e.key === "r" || e.key === "R") { restartLevel(); return; }
+    if (e.key === "h" || e.key === "H") { useHint(); return; }
+    var dx = 0, dy = 0;
+    if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") dx = -1;
+    else if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") dx = 1;
+    else if (e.key === "ArrowUp" || e.key === "w" || e.key === "W") dy = -1;
+    else if (e.key === "ArrowDown" || e.key === "s" || e.key === "S") dy = 1;
+    else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); G.usedKeyboard = true; tapArrow(G.cursor.x, G.cursor.y); return; }
+    else return;
+    e.preventDefault();
+    G.usedKeyboard = true;
+    var lv = LEVELS[G.level - 1];
+    G.cursor.x = clamp(G.cursor.x + dx, 0, lv.w - 1);
+    G.cursor.y = clamp(G.cursor.y + dy, 0, lv.h - 1);
+  } else if (G.state === "paused" && (e.key === "p" || e.key === "P" || e.key === "Escape")) {
+    resumeGame();
+  } else if (G.state === "menu" && (e.key === "Enter" || e.key === " ")) {
+    AudioSys.ensure(); startGame(SAVE.lastLevel || 1);
+  } else if (G.state === "results" && (e.key === "Enter" || e.key === " ")) {
+    var btn = !$("btnNext").classList.contains("hidden") ? $("btnNext") : $("btnRetry");
+    btn.click();
+  }
+});
+document.addEventListener("visibilitychange", function () {
+  if (document.hidden && G.state === "playing") pauseGame();
+});
+
+function toggleMute() {
+  SAVE.muted = !SAVE.muted;
+  persistSave();
+  updateSoundUI();
+  if (SAVE.muted) Music.stop();
+  else if (G.state === "playing") Music.start();
+  if (!SAVE.muted) AudioSys.click();
+}
+function buildLevelGrid() {
+  var grid = $("levelGrid");
+  grid.innerHTML = "";
+  for (var n = 1; n <= TOTAL_LEVELS; n++) {
+    (function (num) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "lvlBtn" + (num > SAVE.unlocked ? " locked" : "") + (num === G.level ? " current" : "");
+      var stars = SAVE.stars[num] || 0;
+      var st = "";
+      for (var i = 0; i < 3; i++) st += i < stars ? "\u2605" : '<span class="dim">\u2606</span>';
+      b.innerHTML = (num > SAVE.unlocked ? "\uD83D\uDD12" : String(num)) + '<span class="st">' + st + "</span>";
+      if (num <= SAVE.unlocked) b.addEventListener("click", function () { AudioSys.click(); startGame(num); });
+      grid.appendChild(b);
+    })(n);
+  }
+}
+function showLevels() {
+  Music.stop();
+  buildLevelGrid();
+  show($("menuOverlay"), false);
+  show($("pauseOverlay"), false);
+  show($("levelsOverlay"), true);
+}
+
+// ---------------------------------------------------------------------------
+// Buttons + boot
+// ---------------------------------------------------------------------------
+function wireButtons() {
+  $("btnPlay").addEventListener("click", function () { AudioSys.click(); startGame(SAVE.lastLevel || 1); });
+  $("btnLevels").addEventListener("click", function () { AudioSys.click(); showLevels(); });
+  $("btnHowTo").addEventListener("click", function () { AudioSys.click(); show($("menuOverlay"), false); show($("howtoOverlay"), true); });
+  $("btnSoundMenu").addEventListener("click", function () { toggleMute(); });
+  $("btnSound").addEventListener("click", function () { toggleMute(); });
+  $("btnPause").addEventListener("click", function () { AudioSys.click(); pauseGame(); });
+  $("btnResume").addEventListener("click", function () { AudioSys.click(); resumeGame(); });
+  $("btnRestart").addEventListener("click", function () { restartLevel(); });
+  $("btnHint").addEventListener("click", function () { useHint(); });
+  $("btnSkip").addEventListener("click", function () { useSkip(); });
+  $("btnPauseRestart").addEventListener("click", function () { restartLevel(); });
+  $("btnPauseLevels").addEventListener("click", function () { AudioSys.click(); show($("pauseOverlay"), false); showLevels(); });
+  $("btnPauseMenu").addEventListener("click", function () { AudioSys.click(); showMenu(); });
+  $("btnLevelsBack").addEventListener("click", function () { AudioSys.click(); show($("levelsOverlay"), false); if (G.state === "paused") show($("pauseOverlay"), true); else showMenu(); });
+  $("btnHowToPlay").addEventListener("click", function () { AudioSys.click(); SAVE.seenHowTo = true; persistSave(); startGame(SAVE.lastLevel || 1); });
+  $("btnHowToBack").addEventListener("click", function () { AudioSys.click(); show($("howtoOverlay"), false); if (G.state === "paused") show($("pauseOverlay"), true); else show($("menuOverlay"), true); });
+  $("btnNext").addEventListener("click", function () {
+    AudioSys.click();
+    if (G.level >= TOTAL_LEVELS) { showMenu(); showLevels(); }
+    else startGame(G.level + 1);
+  });
+  $("btnRetry").addEventListener("click", function () { restartLevel(); });
+  $("btnResultsLevels").addEventListener("click", function () { AudioSys.click(); showLevels(); });
+  $("btnMenu").addEventListener("click", function () { AudioSys.click(); showMenu(); });
+}
+function boot() {
+  wireButtons();
+  // Backdrop board behind the menu (level = last played).
+  G.st = newState(LEVELS[G.level - 1]);
+  G.movesLeft = LEVELS[G.level - 1].moves;
+  G.timeLeft = LEVELS[G.level - 1].time;
+  updateMenu(); updateSoundUI();
+  if (SAVE.muted) $("btnSound").textContent = "\uD83D\uDD07 Sound: Off";
+  var qs = {};
+  try {
+    var sp = new URLSearchParams(window.location.search || "");
+    sp.forEach(function (v, k) { qs[k] = v; });
+  } catch (e) {}
+  if (qs.cover) {
+    // Cover mode: clean board shot, no overlays/HUD, timer frozen.
+    var cl = parseInt(qs.cover, 10);
+    if (cl >= 1 && cl <= TOTAL_LEVELS) {
+      G.level = cl;
+      G.st = newState(LEVELS[cl - 1]);
+      G.movesLeft = LEVELS[cl - 1].moves;
+      G.timeLeft = LEVELS[cl - 1].time;
+    }
+    setState("cover");
+    show($("menuOverlay"), false);
+    show($("hud"), false); show($("actionBar"), false);
+  } else if (qs.level) {
+    var ln = parseInt(qs.level, 10);
+    if (ln >= 1 && ln <= TOTAL_LEVELS) startGame(ln);
+    else showMenu();
+  } else if (!SAVE.seenHowTo) {
+    show($("menuOverlay"), false);
+    show($("howtoOverlay"), true);
+  }
+  window.__gameReady = true;
+  requestAnimationFrame(loop);
+}
+
+// Test hooks (used by tests.js, boot_test.js and the video recorder).
+window.__ArrowGridEscape = {
+  G: G, SAVE: SAVE, startGame: startGame, endRound: endRound, stepGame: stepGame,
+  LEVELS: LEVELS, tapArrow: tapArrow, useHint: useHint, useSkip: useSkip,
+  restartLevel: restartLevel, pauseGame: pauseGame, resumeGame: resumeGame,
+  showMenu: showMenu, buildLevelGrid: buildLevelGrid,
+  hintFromState: hintFromState, solveLevel: solveLevel, newState: newState,
+  slide: slide, themeForLevel: themeForLevel, boardGeom: boardGeom,
+  cellCenter: cellCenter, draw: draw, updateHUD: updateHUD, updateMenu: updateMenu,
+  Music: Music, AudioSys: AudioSys, drawCoin: drawCoin
+};
+boot();
+</script>
+</body>
+</html>
