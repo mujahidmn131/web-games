@@ -1,0 +1,1517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Sprocket Sort — Flip the diverter, sort every gear!</title>
+<!--
+  Sprocket Sort — original HTML5 real-time sorting arcade game.
+  100% code-drawn (Canvas 2D + CSS), no images, no audio files, no
+  external URLs. Seeded RNG (mulberry32), localStorage save
+  "sprocketsort_save_v1".
+
+  HOW TO PLAY: gears roll down the belts from the top. At the bottom of
+  each belt sits a diverter (3-way switch: LEFT / STRAIGHT / RIGHT).
+  Below the belts are 3 machines — Round Press (amber), Square Press
+  (blue), Hex Press (coral). Tap a diverter to cycle it L -> C -> R, or
+  tap one of the three coloured chute arrows under it to set it
+  directly. Every gear must land in its MATCHING machine: round gear ->
+  Round Press, square gear -> Square Press, hex gear -> Hex Press.
+  Wrong machine = lose 1 life + combo resets. Sort the quota before
+  the timer runs out to win the level. Golden gears (level 7+) are
+  worth 3x points; Express gears (level 12+) move 40% faster. Every
+  5th level is a RUSH level: quota +25%, timer -20%, score x2.
+  - Scoring: 100 per correct sort x combo multiplier (1 + floor(combo/5),
+    cap x5). Golden gear = 300 x multiplier. Coins: 1 per correct sort.
+  - Lives: 3 per level. Lose = 3 lives lost OR timer hits 0.
+  - 30+ levels (seed = level number; levels 1-4 hand-tuned).
+  Sounds are tiny WebAudio oscillator/noise blips with a mute toggle.
+  No audio files. Keyboard: 1/2/3 flip diverters 1/2/3, Space pauses,
+  M mutes.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: #0a1e22;
+    font-family: "Trebuchet MS", "Segoe UI", Verdana, sans-serif;
+    color: #f4ead8; overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none; -webkit-user-select: none;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #game {
+    position: relative; width: 100%; max-width: 960px; height: 100%;
+    max-height: 600px; margin: 0 auto; aspect-ratio: 960 / 600;
+    background: linear-gradient(180deg, #1d4a4f 0%, #0f2e33 55%, #0a2226 100%);
+    overflow: hidden;
+  }
+  @media (min-aspect-ratio: 960/600) { #game { height: 100vh; width: auto; } }
+  canvas#boardCanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; object-fit: contain; }
+  .hidden { display: none !important; }
+
+  /* ---- HUD top bar ---- */
+  #hud {
+    position: absolute; left: 0; right: 0; top: 0; z-index: 5;
+    display: flex; align-items: center; gap: 6px; padding: 7px 9px;
+    pointer-events: none;
+  }
+  #hud .pill {
+    background: rgba(8, 26, 30, 0.88); border: 1px solid rgba(232, 163, 61, 0.4);
+    border-radius: 999px; padding: 6px 11px; font-weight: 800; font-size: 14px;
+    color: #f4ead8; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+  }
+  #hud .pill.level { color: #ffd166; }
+  #hud .pill.score { color: #f4ead8; }
+  #hud .pill.combo { color: #7fc8e8; }
+  #hud .pill.combo.hot { color: #ffd166; animation: pulse 0.5s infinite alternate; }
+  #hud .pill.lives { color: #ff8a7a; }
+  #hud .pill.timer { color: #bfe3b0; }
+  #hud .pill.timer.low { color: #ff5d5d; animation: pulse 0.5s infinite alternate; }
+  @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.08); } }
+  #quotaBar {
+    flex: 1; height: 10px; min-width: 40px; background: rgba(8,26,30,0.88);
+    border: 1px solid rgba(232,163,61,0.4); border-radius: 999px; overflow: hidden;
+  }
+  #quotaBarFill { height: 100%; width: 0%; background: linear-gradient(90deg, #e8a33d, #ffd166); transition: width 0.25s; }
+  .iconBtn {
+    pointer-events: auto; width: 36px; height: 36px; border-radius: 12px;
+    border: 1px solid rgba(232, 163, 61, 0.5); background: rgba(10, 34, 38, 0.92);
+    color: #f4ead8; font-size: 15px; font-weight: 900; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4); font-family: inherit;
+  }
+  .iconBtn:active { transform: scale(0.92); }
+  .iconBtn.on { background: #c96f2e; color: #fff; border-color: #e8a33d; }
+  /* HUD text button (Sound) — .iconBtn is a fixed 36px square and cannot
+     hold text; this one sizes to its label. */
+  .hudBtn {
+    pointer-events: auto; border-radius: 12px; padding: 0 10px; height: 36px;
+    border: 1px solid rgba(232, 163, 61, 0.5); background: rgba(10, 34, 38, 0.92);
+    color: #f4ead8; font-size: 13px; font-weight: 900; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4); font-family: inherit; white-space: nowrap;
+  }
+  .hudBtn:active { transform: scale(0.95); }
+  .coinSvg { width: 15px; height: 15px; display: inline-block; vertical-align: -2px; }
+  .statBox .coinSvg { width: 18px; height: 18px; vertical-align: -4px; }
+  .boltSvg { width: 15px; height: 15px; display: inline-block; vertical-align: -2px; }
+  .boltSvg.lost { filter: grayscale(1) brightness(0.45); opacity: 0.55; }
+
+  /* ---- buttons / overlays ---- */
+  .btn {
+    border: none; border-radius: 14px; padding: 10px 16px; font-family: inherit;
+    font-size: 16px; font-weight: 900; cursor: pointer; color: #231303; white-space: nowrap;
+    background: linear-gradient(180deg, #ffd94d 0%, #e8a33d 100%);
+    box-shadow: 0 4px 0 #a86f14, 0 6px 14px rgba(0,0,0,0.45);
+    text-shadow: 0 1px 0 rgba(255,255,255,0.4);
+  }
+  .btn:active { transform: translateY(2px); box-shadow: 0 2px 0 #a86f14; }
+  .btn.green {
+    background: linear-gradient(180deg, #7fd08a 0%, #58c472 100%);
+    box-shadow: 0 4px 0 #2f7a42, 0 6px 14px rgba(0,0,0,0.45); color: #0c2a12;
+  }
+  .btn.green:active { box-shadow: 0 2px 0 #2f7a42; }
+  .btn.ghost {
+    background: rgba(244, 234, 216, 0.14); color: #f4ead8; border: 1px solid rgba(244,234,216,0.4);
+    box-shadow: none; text-shadow: none;
+  }
+  .btn.big { font-size: 22px; padding: 14px 34px; border-radius: 18px; }
+  .overlay {
+    position: absolute; inset: 0; z-index: 10; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 12px; padding: 18px;
+    background: rgba(6, 20, 23, 0.82); text-align: center;
+  }
+  .overlay h1 {
+    font-size: 44px; font-weight: 900; letter-spacing: -1px; color: #ffd166;
+    text-shadow: 0 3px 0 #7a4d0d, 0 6px 18px rgba(0,0,0,0.6);
+  }
+  .overlay h2 { font-size: 30px; font-weight: 900; color: #ffd166; text-shadow: 0 2px 0 rgba(0,0,0,0.5); }
+  .overlay p { font-size: 15px; line-height: 1.55; max-width: 620px; color: #e8e0cd; }
+  .overlay .sub { font-size: 15px; color: #bfe3b0; font-weight: 700; }
+  .overlay .row { display: flex; gap: 10px; align-items: center; justify-content: center; flex-wrap: wrap; }
+  .statBox {
+    background: rgba(8, 26, 30, 0.9); border: 1px solid rgba(232,163,61,0.4);
+    border-radius: 12px; padding: 8px 14px; font-size: 15px; font-weight: 800; color: #f4ead8;
+  }
+  .statBox b { color: #ffd166; }
+  #starsRow { font-size: 34px; color: #ffd166; letter-spacing: 6px; text-shadow: 0 2px 0 rgba(0,0,0,0.5); }
+  #starsRow .dim { color: rgba(244,234,216,0.25); }
+  .howto {
+    text-align: left; font-size: 15px; line-height: 1.6; max-width: 640px;
+    background: rgba(8, 26, 30, 0.9); border: 1px solid rgba(232,163,61,0.4);
+    border-radius: 14px; padding: 14px 18px; color: #e8e0cd;
+  }
+  .howto b { color: #ffd166; }
+  .howto .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin: 0 2px; }
+  #levelGrid {
+    display: grid; grid-template-columns: repeat(10, 40px); gap: 6px;
+    justify-content: center; max-width: 480px;
+  }
+  #levelGrid button {
+    width: 40px; height: 40px; border-radius: 10px; font-family: inherit;
+    font-size: 14px; font-weight: 900; cursor: pointer; color: #f4ead8;
+    background: linear-gradient(180deg, #1d4a4f, #123b42);
+    border: 1px solid rgba(232,163,61,0.5);
+  }
+  #levelGrid button:disabled { filter: grayscale(0.9) brightness(0.55); cursor: default; }
+  #levelGrid button .st { display: block; font-size: 8px; color: #ffd166; letter-spacing: 1px; line-height: 1; }
+  #themeRow { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  #themeRow button {
+    border: 2px solid rgba(232,163,61,0.4); border-radius: 12px; padding: 7px 12px;
+    background: rgba(8,26,30,0.9); color: #f4ead8; font-family: inherit;
+    font-size: 13px; font-weight: 800; cursor: pointer;
+  }
+  #themeRow button.sel { border-color: #ffd166; background: #2a5a50; }
+  #themeRow button:disabled { filter: grayscale(0.9) brightness(0.55); cursor: default; }
+  .rushBadge {
+    display: inline-block; background: #e4572e; color: #fff; font-weight: 900;
+    font-size: 13px; letter-spacing: 2px; border-radius: 999px; padding: 4px 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  }
+  #toast {
+    position: absolute; left: 50%; top: 54px; transform: translateX(-50%) translateY(-8px);
+    z-index: 8; background: rgba(8, 26, 30, 0.95); border: 1px solid rgba(232,163,61,0.5);
+    color: #ffd166; font-weight: 900; font-size: 15px; padding: 8px 16px; border-radius: 999px;
+    opacity: 0; pointer-events: none; transition: opacity 0.18s, transform 0.18s; white-space: nowrap;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #announcer { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  @media (max-width: 640px) {
+    .overlay h1 { font-size: 32px; }
+    .overlay h2 { font-size: 24px; }
+    .overlay p, .howto { font-size: 13px; }
+    #levelGrid { grid-template-columns: repeat(10, 30px); gap: 4px; }
+    #levelGrid button { width: 30px; height: 30px; font-size: 11px; }
+    #hud .pill { font-size: 12px; padding: 5px 8px; }
+    .btn.big { font-size: 18px; padding: 12px 26px; }
+  }
+</style>
+</head>
+<body>
+<div id="game">
+  <canvas id="boardCanvas" width="960" height="600"></canvas>
+
+  <!-- shared SVG art: coin + bolt (NO emoji anywhere — Lesson #1) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <radialGradient id="coinGold" cx="0.38" cy="0.32" r="0.9">
+        <stop offset="0%" stop-color="#fff3b0"/><stop offset="45%" stop-color="#ffd94d"/><stop offset="100%" stop-color="#c98f1b"/>
+      </radialGradient>
+      <linearGradient id="boltGold" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#ffe27a"/><stop offset="100%" stop-color="#e8a33d"/>
+      </linearGradient>
+    </defs>
+  </svg>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <button class="iconBtn" id="btnPause" type="button" title="Pause (Space)">II</button>
+    <span class="pill level" id="hudLevel">Level 1</span>
+    <div id="quotaBar" title="Quota progress"><div id="quotaBarFill"></div></div>
+    <span class="pill score" id="hudScore">Score 0</span>
+    <span class="pill combo" id="hudCombo">Combo x1</span>
+    <span class="pill lives" id="hudLives"><svg class="boltSvg" id="bolt1" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 L5 13 H11 L9 22 L19 9 H12.5 Z" fill="url(#boltGold)" stroke="#8a5a0d" stroke-width="1"/></svg><svg class="boltSvg" id="bolt2" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 L5 13 H11 L9 22 L19 9 H12.5 Z" fill="url(#boltGold)" stroke="#8a5a0d" stroke-width="1"/></svg><svg class="boltSvg" id="bolt3" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 L5 13 H11 L9 22 L19 9 H12.5 Z" fill="url(#boltGold)" stroke="#8a5a0d" stroke-width="1"/></svg> <span id="hudLivesNum">3</span></span>
+    <span class="pill timer" id="hudTimer">1:15</span>
+    <button class="hudBtn" id="btnSound" type="button">Sound: On</button>
+  </div>
+
+  <div id="toast" role="status"></div>
+  <div id="announcer" aria-live="polite"></div>
+
+  <!-- MENU -->
+  <div id="menuOverlay" class="overlay hidden">
+    <h1>SPROCKET SORT</h1>
+    <p class="sub">Flip the diverter — sort every gear into its matching machine!</p>
+    <div class="row">
+      <span class="statBox">Best score: <b id="menuBest">0</b></span>
+      <span class="statBox"><svg class="coinSvg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10.6" fill="url(#coinGold)" stroke="#b97a0e" stroke-width="1.5"/><circle cx="12" cy="12" r="7.4" fill="none" stroke="#c98f1b" stroke-width="1.1" opacity="0.9"/><path d="M12 7.1L13.2 10.4 16.7 10.5 13.9 12.6 14.9 16 12 14 9.1 16 10.1 12.6 7.3 10.5 10.8 10.4Z" fill="#fff3b0" stroke="#d99a1f" stroke-width="0.6" stroke-linejoin="round"/><path d="M4.6 9.4A8 8 0 0 1 9.4 4.6" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" opacity="0.9"/></svg> <b id="menuCoins">0</b></span>
+      <span class="statBox">Level: <b id="menuLevel">1</b></span>
+    </div>
+    <div class="row"><button class="btn big green" id="btnPlay" type="button">PLAY</button>
+    <button class="btn" id="btnHowTo" type="button">How to Play</button></div>
+    <div id="levelGrid"></div>
+    <div id="themeRow"></div>
+    <div class="row"><button class="hudBtn" id="btnMenuSound" type="button">Sound: On</button></div>
+  </div>
+
+  <!-- HOW TO PLAY -->
+  <div id="howtoOverlay" class="overlay hidden">
+    <h2>How to Play</h2>
+    <div class="howto">
+      <b>1. Watch the belts.</b> Gears roll down from the top — round
+      <span class="swatch" style="background:#f5a623"></span> (amber), square
+      <span class="swatch" style="background:#4aa8e0"></span> (blue), hex
+      <span class="swatch" style="background:#e85d4a"></span> (coral).<br>
+      <b>2. Flip the diverter.</b> Tap the lever under a belt to cycle it
+      LEFT &rarr; STRAIGHT &rarr; RIGHT, or tap one of the three coloured
+      chute arrows to set it directly. Each arrow matches a machine by colour.<br>
+      <b>3. Match the machine.</b> Round gear &rarr; Round Press, square gear
+      &rarr; Square Press, hex gear &rarr; Hex Press. A wrong machine costs
+      1 life and resets your combo.<br>
+      <b>4. Beat the quota.</b> Sort the quota of gears before the timer runs
+      out. Golden gears (level 7+) are worth 3&times; points; Express gears
+      (level 12+) move 40% faster. Every 5th level is RUSH: quota +25%,
+      timer &minus;20%, score &times;2.<br>
+      <b>Keys:</b> 1/2/3 flip diverters 1/2/3, Space pauses, M mutes.
+    </div>
+    <div class="row"><button class="btn green" id="btnHowToGotIt" type="button">Got it!</button></div>
+  </div>
+
+  <!-- LEVEL INTRO -->
+  <div id="levelIntroOverlay" class="overlay hidden">
+    <h2 id="levelIntroTitle">Level 1</h2>
+    <p id="levelIntroText">Sort 8 gears before the timer runs out.</p>
+    <div class="row" id="levelIntroBadgeRow"></div>
+    <div class="row">
+      <span class="statBox">Quota: <b id="levelIntroQuota">8</b></span>
+      <span class="statBox">Timer: <b id="levelIntroTimer">1:15</b></span>
+      <span class="statBox">Belts: <b id="levelIntroBelts">1</b></span>
+    </div>
+    <div class="row"><button class="btn green" id="btnSortStart" type="button">Sort!</button></div>
+  </div>
+
+  <!-- LEVEL COMPLETE -->
+  <div id="levelCompleteOverlay" class="overlay hidden">
+    <h2>Level Complete!</h2>
+    <div id="starsRow"></div>
+    <p id="levelCompleteText">All gears sorted!</p>
+    <div class="row">
+      <span class="statBox">Score: <b id="completeScore">0</b></span>
+      <span class="statBox"><svg class="coinSvg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10.6" fill="url(#coinGold)" stroke="#b97a0e" stroke-width="1.5"/><circle cx="12" cy="12" r="7.4" fill="none" stroke="#c98f1b" stroke-width="1.1" opacity="0.9"/><path d="M12 7.1L13.2 10.4 16.7 10.5 13.9 12.6 14.9 16 12 14 9.1 16 10.1 12.6 7.3 10.5 10.8 10.4Z" fill="#fff3b0" stroke="#d99a1f" stroke-width="0.6" stroke-linejoin="round"/><path d="M4.6 9.4A8 8 0 0 1 9.4 4.6" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" opacity="0.9"/></svg> <b id="completeCoins">0</b></span>
+      <span class="statBox">Best: <b id="completeBest">0</b></span>
+    </div>
+    <div class="row">
+      <button class="btn green" id="btnNextLevel" type="button">Next Level</button>
+      <button class="btn" id="btnReplayLevel" type="button">Replay</button>
+      <button class="btn ghost" id="btnCompleteMenu" type="button">Menu</button>
+    </div>
+  </div>
+
+  <!-- GAME OVER -->
+  <div id="gameOverOverlay" class="overlay hidden">
+    <h2 id="gameOverTitle">Out of Lives!</h2>
+    <p id="gameOverText">The gears piled up. Try again!</p>
+    <div class="row">
+      <span class="statBox">Score: <b id="overScore">0</b></span>
+      <span class="statBox">Sorted: <b id="overSorted">0</b> / <b id="overQuota">8</b></span>
+      <span class="statBox"><svg class="coinSvg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10.6" fill="url(#coinGold)" stroke="#b97a0e" stroke-width="1.5"/><circle cx="12" cy="12" r="7.4" fill="none" stroke="#c98f1b" stroke-width="1.1" opacity="0.9"/><path d="M12 7.1L13.2 10.4 16.7 10.5 13.9 12.6 14.9 16 12 14 9.1 16 10.1 12.6 7.3 10.5 10.8 10.4Z" fill="#fff3b0" stroke="#d99a1f" stroke-width="0.6" stroke-linejoin="round"/><path d="M4.6 9.4A8 8 0 0 1 9.4 4.6" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" opacity="0.9"/></svg> <b id="overCoins">0</b></span>
+    </div>
+    <div class="row">
+      <button class="btn green" id="btnRetry" type="button">Retry Level</button>
+      <button class="btn ghost" id="btnOverMenu" type="button">Menu</button>
+    </div>
+  </div>
+
+  <!-- PAUSE -->
+  <div id="pauseOverlay" class="overlay hidden">
+    <h2>Paused</h2>
+    <p id="pauseInfo">Level 1 — Score 0</p>
+    <div class="row">
+      <button class="btn green" id="btnResume" type="button">Resume</button>
+      <button class="btn ghost" id="btnQuitLevel" type="button">Quit to Menu</button>
+    </div>
+  </div>
+</div>
+<script>
+"use strict";
+// __PURE_LOGIC_START__
+/* ================= PURE LOGIC (node-testable, no DOM) ================= */
+const SAVE_KEY = "sprocketsort_save_v1";
+const GAME_TITLE = "Sprocket Sort";
+const MAX_LEVEL = 40; // level grid shows 1..40; levels beyond are procedural too
+const GEAR_TYPES = ["round", "square", "hex"];
+const GEAR_COLORS = { round: "#F5A623", square: "#4AA8E0", hex: "#E85D4A" };
+const GEAR_DARK = { round: "#B97A0E", square: "#2E6E9E", hex: "#A83A2C" };
+// Diverter directions: 0 = LEFT -> machine 0, 1 = STRAIGHT -> machine 1, 2 = RIGHT -> machine 2.
+const DIRS = ["L", "C", "R"];
+const BELT_TOP_Y = 64, JUNCTION_Y = 420, MACHINE_MOUTH_Y = 478, CHUTE_TIME = 0.35;
+const ANTI_JAM_S = 0.9; // no two gears spawn on the same belt within 0.9 s
+const GOLDEN_RATE = 0.12, EXPRESS_RATE = 0.15;
+
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    var t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+/* ---- themes (cosmetic; unlock by highest unlocked level) ---- */
+const THEMES = [
+  { name: "Rusty Yard", unlock: 1, belt: "#33544A", beltDark: "#243D36", frame: "#123B42", rail: "#C96F2E", bg1: "#1D4A4F", bg2: "#0F2E33", accent: "#E8A33D" },
+  { name: "Neon Line", unlock: 5, belt: "#1F3D5C", beltDark: "#162C42", frame: "#0F2E33", rail: "#4AA8E0", bg1: "#12283D", bg2: "#0A1A2A", accent: "#4AA8E0" },
+  { name: "Candy Works", unlock: 10, belt: "#5C3A52", beltDark: "#452A3D", frame: "#3D2B3D", rail: "#E85D7A", bg1: "#4A2B40", bg2: "#2E1A28", accent: "#E85D7A" },
+  { name: "Midnight Shift", unlock: 15, belt: "#2A2A3D", beltDark: "#1D1D2B", frame: "#14141F", rail: "#9B7FE8", bg1: "#1A1A2E", bg2: "#0E0E18", accent: "#9B7FE8" },
+];
+function themeForUnlocked(unlocked) {
+  var idx = 0;
+  for (var i = 0; i < THEMES.length; i++) if (unlocked >= THEMES[i].unlock) idx = i;
+  return idx;
+}
+function themeUnlocked(save, i) { return save.unlocked >= THEMES[i].unlock; }
+
+/* ---- level config: levels 1-4 are literal hand-tuned data; 5+ procedural ---- */
+const LEVEL_TABLE = {
+  1: { quota: 8, timer: 75, belts: 1, types: ["round", "square"] },
+  2: { quota: 8, timer: 75, belts: 1, types: ["round", "square"] },
+  3: { quota: 10, timer: 80, belts: 1, types: ["round", "square", "hex"] },
+  4: { quota: 12, timer: 85, belts: 1, types: ["round", "square", "hex"] },
+};
+function quotaFor(level) {
+  if (LEVEL_TABLE[level]) return LEVEL_TABLE[level].quota;
+  if (level <= 6) return 12 + (level - 4) * 2; // 5:14, 6:16
+  if (level === 7 || level === 8) return 18;
+  if (level === 9) return 20;
+  if (level === 10 || level === 11) return 22;
+  if (level === 12 || level === 13) return 24;
+  if (level === 14) return 26;
+  return Math.min(30, 26 + Math.floor((level - 15) / 3)); // 15+: plateau 26..30
+}
+function timerFor(level) {
+  if (LEVEL_TABLE[level]) return LEVEL_TABLE[level].timer;
+  if (level <= 11) return 85 + (level - 4) * 5; // 5:90 .. 11:120
+  return 120;
+}
+function beltsFor(level) { return level <= 4 ? 1 : level <= 8 ? 2 : 3; }
+function typesFor(level) { return level <= 2 ? ["round", "square"] : ["round", "square", "hex"]; }
+function newMechanicFor(level) {
+  if (level === 1) return "Tap the lever to flip the diverter!";
+  if (level === 3) return "NEW: Hex gears — coral!";
+  if (level === 5) return "NEW: 2 belts!";
+  if (level === 7) return "NEW: Golden gears — 3x points!";
+  if (level === 9) return "NEW: 3 belts!";
+  if (level === 12) return "NEW: Express gears — 40% faster!";
+  if (level % 5 === 0) return "RUSH LEVEL — quota +25%, timer -20%, score x2!";
+  return null;
+}
+function levelConfig(level) {
+  var rush = level % 5 === 0;
+  var quota = quotaFor(level);
+  var timer = timerFor(level);
+  if (rush) { quota = Math.round(quota * 1.25); timer = Math.round(timer * 0.8); }
+  return {
+    level: level,
+    belts: beltsFor(level),
+    types: typesFor(level),
+    quota: quota,
+    timer: timer,
+    speed: Math.min(130, 55 + level * 4), // px/s down the belt
+    interval: Math.max(0.85, 2.2 - (level - 1) * 0.09), // spawn interval (s)
+    golden: level >= 7,
+    express: level >= 12,
+    rush: rush,
+    scoreMul: rush ? 2 : 1,
+    mechanic: newMechanicFor(level),
+  };
+}
+
+/* ---- scoring / stars ---- */
+function comboMultiplier(combo) { return Math.min(5, 1 + Math.floor(combo / 5)); }
+function scoreForSort(gear, combo, rush) {
+  var base = gear.golden ? 300 : 100;
+  return base * comboMultiplier(combo) * (rush ? 2 : 1);
+}
+function starsForResult(lives, timeLeft, timer) {
+  if (lives >= 3 && timeLeft >= timer * 0.2) return 3;
+  if (lives >= 2) return 2;
+  return 1;
+}
+function machineIndexForType(type) { return GEAR_TYPES.indexOf(type); }
+
+/* ---- save (versioned v1; corrupted/old saves clamp, never crash) ---- */
+function defaultSave() {
+  return { v: 1, bestScore: 0, unlocked: 1, stars: {}, coins: 0, theme: 0, muted: false, seenHowto: false };
+}
+function loadSave(store) {
+  var s = defaultSave();
+  try {
+    var raw = store ? store.getItem(SAVE_KEY) : (typeof localStorage !== "undefined" ? localStorage.getItem(SAVE_KEY) : null);
+    if (!raw) return s;
+    var d = JSON.parse(raw);
+    if (!d || typeof d !== "object") return s;
+    if (typeof d.bestScore === "number" && isFinite(d.bestScore)) s.bestScore = Math.max(0, Math.floor(d.bestScore));
+    if (typeof d.unlocked === "number" && isFinite(d.unlocked)) s.unlocked = clamp(Math.floor(d.unlocked), 1, MAX_LEVEL);
+    if (d.stars && typeof d.stars === "object") {
+      Object.keys(d.stars).forEach(function (k) {
+        var v = d.stars[k];
+        if (typeof v === "number") s.stars[k] = clamp(Math.floor(v), 0, 3);
+      });
+    }
+    if (typeof d.coins === "number" && isFinite(d.coins)) s.coins = Math.max(0, Math.floor(d.coins));
+    if (typeof d.theme === "number" && isFinite(d.theme)) s.theme = clamp(Math.floor(d.theme), 0, THEMES.length - 1);
+    if (typeof d.muted === "boolean") s.muted = d.muted;
+    if (typeof d.seenHowto === "boolean") s.seenHowto = d.seenHowto;
+  } catch (e) { /* corrupted save -> fresh default */ }
+  return s;
+}
+function saveSave(s, store) {
+  try {
+    var raw = JSON.stringify(s);
+    if (store) store.setItem(SAVE_KEY, raw);
+    else if (typeof localStorage !== "undefined") localStorage.setItem(SAVE_KEY, raw);
+  } catch (e) {}
+}
+
+/* ---- level state + simulation (pure; rng injected) ---- */
+function newLevelState(cfg, seed) {
+  return {
+    level: cfg.level, cfg: cfg, seed: seed,
+    gears: [], sorted: 0, wrong: 0, lives: 3, score: 0, combo: 0, coinsRun: 0,
+    timeLeft: cfg.timer, time: 0, spawnT: 0.6, spawnCount: 0,
+    lastSpawnAt: [-9, -9, -9], nextId: 1,
+    diverters: [1, 1, 1], // every belt starts STRAIGHT (machine 1)
+    over: false, won: false, reason: null, lastTickSec: -1,
+  };
+}
+function flipDiverter(ls, belt) {
+  if (belt < 0 || belt >= ls.cfg.belts) return -1;
+  ls.diverters[belt] = (ls.diverters[belt] + 1) % 3;
+  return ls.diverters[belt];
+}
+function setDiverter(ls, belt, dir) {
+  if (belt < 0 || belt >= ls.cfg.belts) return -1;
+  if (dir < 0 || dir > 2) return -1;
+  ls.diverters[belt] = dir;
+  return dir;
+}
+function pickSpawnBelt(ls, rng) {
+  // Anti-jam: a belt is eligible only if it has not spawned within 0.9 s.
+  var eligible = [];
+  for (var b = 0; b < ls.cfg.belts; b++) {
+    if (ls.time - ls.lastSpawnAt[b] >= ANTI_JAM_S) eligible.push(b);
+  }
+  if (!eligible.length) return -1;
+  return eligible[Math.floor(rng() * eligible.length)];
+}
+function spawnGear(ls, rng) {
+  var belt = pickSpawnBelt(ls, rng);
+  if (belt < 0) return null;
+  var types = ls.cfg.types;
+  var type = types[Math.floor(rng() * types.length)];
+  var golden = ls.cfg.golden && rng() < GOLDEN_RATE;
+  var express = ls.cfg.express && rng() < EXPRESS_RATE;
+  var speed = ls.cfg.speed * (express ? 1.4 : 1) * (golden ? 1.15 : 1);
+  var gear = {
+    id: ls.nextId++, belt: belt, type: type, golden: golden, express: express,
+    y: BELT_TOP_Y, speed: speed, state: "fall", chuteT: 0, dir: 1,
+    rot: rng() * 6.283, fromX: 0, fromY: 0, toX: 0, toY: 0,
+  };
+  ls.gears.push(gear);
+  ls.lastSpawnAt[belt] = ls.time;
+  ls.spawnCount++;
+  return gear;
+}
+/* One fixed step. Returns events for the runtime (SFX/particles):
+   spawn / chute / correct {points, combo, mult} / wrong {lives} /
+   tick {sec} (last 5 s) / win {score, stars} / lose {reason}. */
+function levelStep(ls, dt, rng) {
+  var events = [];
+  if (ls.over) return events;
+  ls.time += dt;
+  ls.timeLeft -= dt;
+  // last-5-seconds tick (one event per whole second crossed)
+  if (ls.timeLeft <= 5.5 && ls.timeLeft > 0) {
+    var sec = Math.ceil(ls.timeLeft);
+    if (sec !== ls.lastTickSec) { ls.lastTickSec = sec; events.push({ t: "tick", sec: sec }); }
+  }
+  // spawn
+  ls.spawnT -= dt;
+  if (ls.spawnT <= 0) {
+    var g = spawnGear(ls, rng);
+    if (g) { events.push({ t: "spawn", gear: g }); ls.spawnT = ls.cfg.interval; }
+    else ls.spawnT = 0.1; // all belts jammed — retry shortly
+  }
+  // gears
+  for (var i = ls.gears.length - 1; i >= 0; i--) {
+    var gear = ls.gears[i];
+    if (gear.state === "fall") {
+      gear.y += gear.speed * dt;
+      gear.rot += dt * 1.5;
+      if (gear.y >= JUNCTION_Y) {
+        gear.state = "chute";
+        gear.chuteT = 0;
+        gear.dir = ls.diverters[gear.belt]; // CURRENT diverter decides the exit
+        gear.fromY = JUNCTION_Y;
+        gear.toY = MACHINE_MOUTH_Y;
+        events.push({ t: "chute", gear: gear });
+      }
+    } else if (gear.state === "chute") {
+      gear.chuteT += dt / CHUTE_TIME;
+      if (gear.chuteT >= 1) {
+        var correct = GEAR_TYPES[gear.dir] === gear.type;
+        ls.gears.splice(i, 1);
+        if (correct) {
+          ls.combo++;
+          var pts = scoreForSort(gear, ls.combo, ls.cfg.rush);
+          ls.score += pts;
+          ls.sorted++;
+          ls.coinsRun++;
+          events.push({ t: "correct", gear: gear, points: pts, combo: ls.combo, mult: comboMultiplier(ls.combo) });
+          if (ls.sorted >= ls.cfg.quota) {
+            ls.over = true; ls.won = true;
+            events.push({ t: "win", score: ls.score, stars: starsForResult(ls.lives, ls.timeLeft, ls.cfg.timer) });
+          }
+        } else {
+          ls.combo = 0;
+          ls.lives--;
+          ls.wrong++;
+          events.push({ t: "wrong", gear: gear, lives: ls.lives });
+          if (ls.lives <= 0) {
+            ls.over = true; ls.won = false; ls.reason = "lives";
+            events.push({ t: "lose", reason: "lives" });
+          }
+        }
+      }
+    }
+  }
+  // timer
+  if (!ls.over && ls.timeLeft <= 0) {
+    ls.timeLeft = 0;
+    ls.over = true; ls.won = false; ls.reason = "time";
+    events.push({ t: "lose", reason: "time" });
+  }
+  return events;
+}
+/* Perfect-player simulation: before every step, aim each belt's diverter
+   at the machine of the gear nearest its junction on that belt. Proves a
+   level is winnable (quota spawnable in time + sortable in time). */
+function simulateLevel(level, seed) {
+  var cfg = levelConfig(level);
+  var rng = mulberry32(seed == null ? level : seed);
+  var ls = newLevelState(cfg, seed == null ? level : seed);
+  var steps = 0, maxSteps = Math.ceil((cfg.timer + 30) * 60);
+  while (!ls.over && steps < maxSteps) {
+    for (var b = 0; b < cfg.belts; b++) {
+      var best = null;
+      for (var i = 0; i < ls.gears.length; i++) {
+        var g = ls.gears[i];
+        if (g.belt === b && g.state === "fall" && (!best || g.y > best.y)) best = g;
+      }
+      if (best) setDiverter(ls, b, machineIndexForType(best.type));
+    }
+    levelStep(ls, 1 / 60, rng);
+    steps++;
+  }
+  return { level: level, won: ls.won, sorted: ls.sorted, quota: cfg.quota, lives: ls.lives, timeLeft: ls.timeLeft, steps: steps, spawns: ls.spawnCount };
+}
+// __PURE_LOGIC_END__
+
+/* ================= RUNTIME (DOM + canvas) ================= */
+var CG = {
+  sdkMuted: false,
+  gameplayStart: function () {}, gameplayStop: function () {},
+  happytime: function () {}, setContext: function () {}, reportProgress: function () {},
+};
+function $(id) { return document.getElementById(id); }
+function show(el, on) { if (el) el.classList.toggle("hidden", !on); }
+function toast(msg, ms) {
+  var t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(function () { t.classList.remove("show"); }, ms || 2200);
+}
+function announce(msg) { var a = $("announcer"); if (a) a.textContent = msg; }
+
+var SAVE = loadSave();
+function persistSave() { saveSave(SAVE); }
+var canvas = $("boardCanvas");
+var ctx = canvas.getContext("2d");
+var reducedMotion = false;
+try { reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
+
+/* ---- layout: belt centres + machine mouths (canvas 960x600) ---- */
+function beltCenters(n) {
+  if (n === 1) return [480];
+  if (n === 2) return [330, 630];
+  return [200, 480, 760];
+}
+function machineX(i) { return [200, 480, 760][i]; }
+function beltX(b, n) { return beltCenters(n || (G.ls ? G.ls.cfg.belts : 3))[b]; }
+function canvasToPoint(clientX, clientY) {
+  var r = canvas.getBoundingClientRect();
+  return {
+    x: (clientX - r.left) * (960 / r.width),
+    y: (clientY - r.top) * (600 / r.height),
+  };
+}
+
+/* ---- audio ---- */
+var AudioSys = {
+  ctx: null, enabled: true, adMuted: false,
+  ensure: function () {
+    if (this.ctx) return this.ctx;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      this.ctx = new AC();
+    } catch (e) { this.ctx = null; }
+    return this.ctx;
+  },
+  tone: function (freq, dur, type, vol, slideTo, exact) {
+    if (SAVE.muted || this.adMuted || CG.sdkMuted) return;
+    var ac = this.ensure();
+    if (!ac) return;
+    try {
+      if (ac.state === "suspended") ac.resume();
+      var o = ac.createOscillator(), g = ac.createGain();
+      var f = exact ? freq : freq * (1 + (Math.random() * 0.06 - 0.03)); // +/-3% jitter, except exact melodies
+      o.type = type || "sine";
+      o.frequency.setValueAtTime(Math.max(30, f), ac.currentTime);
+      if (slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(30, slideTo), ac.currentTime + dur);
+      g.gain.setValueAtTime(vol || 0.12, ac.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
+      o.connect(g); g.connect(ac.destination);
+      o.start(); o.stop(ac.currentTime + dur + 0.02);
+    } catch (e) {}
+  },
+  noise: function (dur, vol) {
+    if (SAVE.muted || this.adMuted || CG.sdkMuted) return;
+    var ac = this.ensure();
+    if (!ac) return;
+    try {
+      if (ac.state === "suspended") ac.resume();
+      var len = Math.floor(ac.sampleRate * dur);
+      var buf = ac.createBuffer(1, len, ac.sampleRate);
+      var data = buf.getChannelData(0);
+      for (var i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      var src = ac.createBufferSource(), g = ac.createGain();
+      src.buffer = buf;
+      g.gain.setValueAtTime(vol || 0.15, ac.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
+      src.connect(g); g.connect(ac.destination);
+      src.start();
+    } catch (e) {}
+  },
+  click: function () { this.tone(660, 0.06, "triangle", 0.08); },
+  clunk: function () { this.noise(0.07, 0.2); this.tone(150, 0.09, "square", 0.12, 80); },
+  ding: function (combo) { var f = 660 + Math.min(combo || 0, 15) * 24; this.tone(f, 0.12, "sine", 0.1, f * 1.5); this.tone(f * 2, 0.08, "sine", 0.05); },
+  buzz: function () { this.tone(140, 0.25, "sawtooth", 0.12, 90); this.noise(0.12, 0.1); },
+  tick: function () { this.tone(1200, 0.04, "sine", 0.07, 0, true); },
+  win: function () { var self = this; [523, 659, 784, 1047].forEach(function (f, i) { setTimeout(function () { self.tone(f, 0.25, "sine", 0.1, 0, true); }, i * 110); }); },
+  lose: function () { var self = this; [392, 330, 262, 196].forEach(function (f, i) { setTimeout(function () { self.tone(f, 0.3, "triangle", 0.1, 0, true); }, i * 140); }); },
+  coin: function () { this.tone(988, 0.08, "sine", 0.09, 0, true); var self = this; setTimeout(function () { self.tone(1319, 0.12, "sine", 0.09, 0, true); }, 70); },
+};
+/* Procedural music: minor-pentatonic loop, root follows the theme.
+   Gesture-only start, vol <= 0.05, stops on pause/menu/results/mute,
+   honours AudioSys.adMuted + CG.sdkMuted (portal ads). */
+var Music = {
+  timer: null, notes: 0, step: 0, ctx: null,
+  ROOTS: [220, 196, 174.6, 164.8],
+  SCALE: [0, 3, 5, 7, 10, 12, 15],
+  start: function () {
+    if (this.timer) return;
+    if (SAVE.muted || AudioSys.adMuted || CG.sdkMuted) return;
+    var ac = AudioSys.ensure();
+    if (!ac) return;
+    this.ctx = ac;
+    var self = this;
+    this.timer = setInterval(function () { self.tick(); }, 240);
+  },
+  tick: function () {
+    if (SAVE.muted || AudioSys.adMuted || CG.sdkMuted) { this.stop(); return; }
+    var ac = this.ctx;
+    if (!ac || ac.state === "suspended") return;
+    var root = this.ROOTS[SAVE.theme % 4];
+    var deg = this.SCALE[this.step % this.SCALE.length];
+    var f = root * Math.pow(2, deg / 12);
+    if (this.step % 8 === 4) f = root / 2; // low anchor every 8th note
+    try {
+      var o = ac.createOscillator(), g = ac.createGain();
+      o.type = "triangle";
+      o.frequency.setValueAtTime(f, ac.currentTime);
+      g.gain.setValueAtTime(0.0001, ac.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.045, ac.currentTime + 0.05);
+      g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.5);
+      o.connect(g); g.connect(ac.destination);
+      o.start(); o.stop(ac.currentTime + 0.55);
+      this.notes++;
+    } catch (e) {}
+    this.step++;
+  },
+  stop: function () {
+    if (this.timer) { clearInterval(this.timer); this.timer = null; }
+  },
+};
+
+/* ---- game state ---- */
+var G = {
+  state: "menu", level: 1, ls: null, rng: null,
+  particles: [], floaters: [], shake: 0, flash: 0,
+  time: 0, animT: 0, howtoFrom: "menu", pausedFrom: null,
+  tutDone: false, comboBanner: null, comboBannerUntil: 0,
+  demoLs: null, demoRng: null,
+};
+var lastFrame = 0, acc = 0;
+
+function theme() { return THEMES[SAVE.theme] || THEMES[0]; }
+function setState(s) { G.state = s; }
+function updateSoundLabels() {
+  var label = (SAVE.muted || (typeof CG !== "undefined" && CG.sdkMuted)) ? "Sound: Off" : "Sound: On";
+  ["btnSound", "btnMenuSound"].forEach(function (id) { var b = $(id); if (b) b.textContent = label; });
+}
+// Singular alias: the portal adapters call updateSoundLabel() (GamePix /
+// CrazyGames / Yandex / GD / Y8 refreshSdkMute). The plain-text label above
+// is the only implementation — no emoji anywhere (NO-EMOJI rule).
+function updateSoundLabel() { updateSoundLabels(); }
+function fmtTime(sec) {
+  sec = Math.max(0, Math.ceil(sec));
+  return Math.floor(sec / 60) + ":" + ("0" + (sec % 60)).slice(-2);
+}
+function updateHUD() {
+  var ls = G.ls;
+  if (!ls) return;
+  $("hudLevel").textContent = "Level " + ls.level + (ls.cfg.rush ? " RUSH" : "");
+  $("hudScore").textContent = "Score " + ls.score;
+  var mult = comboMultiplier(ls.combo);
+  var hc = $("hudCombo");
+  hc.textContent = ls.combo > 0 ? "Combo x" + mult + " (" + ls.combo + ")" : "Combo x1";
+  hc.classList.toggle("hot", mult >= 3);
+  $("hudLivesNum").textContent = String(ls.lives);
+  for (var i = 1; i <= 3; i++) {
+    var bolt = $("bolt" + i);
+    if (bolt) bolt.classList.toggle("lost", i > ls.lives);
+  }
+  var ht = $("hudTimer");
+  ht.textContent = fmtTime(ls.timeLeft);
+  ht.classList.toggle("low", ls.timeLeft <= 10);
+  $("quotaBarFill").style.width = Math.round((ls.sorted / ls.cfg.quota) * 100) + "%";
+}
+function hideAllOverlays() {
+  ["menuOverlay", "howtoOverlay", "levelIntroOverlay", "levelCompleteOverlay", "gameOverOverlay", "pauseOverlay"].forEach(function (id) { show($(id), false); });
+}
+function renderLevelGrid() {
+  var grid = $("levelGrid");
+  grid.innerHTML = "";
+  for (var l = 1; l <= MAX_LEVEL; l++) {
+    (function (lvl) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.disabled = lvl > SAVE.unlocked;
+      var stars = SAVE.stars[lvl] || 0;
+      b.innerHTML = lvl + (stars ? '<span class="st">' + "\u2605".repeat(stars) + "</span>" : "");
+      b.title = lvl > SAVE.unlocked ? "Locked — finish level " + (lvl - 1) + " first" : "Level " + lvl + (stars ? " — " + stars + " stars" : "");
+      b.addEventListener("click", function () { AudioSys.click(); showLevelIntro(lvl); });
+      grid.appendChild(b);
+    })(l);
+  }
+}
+function buildThemeRow() {
+  var row = $("themeRow");
+  row.innerHTML = "";
+  THEMES.forEach(function (t, i) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.textContent = t.name;
+    b.className = SAVE.theme === i ? "sel" : "";
+    b.disabled = !themeUnlocked(SAVE, i);
+    if (b.disabled) b.textContent = t.name + " (Lv " + t.unlock + ")";
+    b.addEventListener("click", function () {
+      SAVE.theme = i; persistSave(); buildThemeRow(); draw(); AudioSys.click();
+    });
+    row.appendChild(b);
+  });
+}
+function updateMenu() {
+  $("menuBest").textContent = String(SAVE.bestScore);
+  $("menuCoins").textContent = String(SAVE.coins);
+  $("menuLevel").textContent = String(SAVE.unlocked);
+  renderLevelGrid();
+  buildThemeRow();
+}
+function showMenu() {
+  setState("menu");
+  try { CG.gameplayStop(); } catch (e) {}
+  G.ls = null;
+  hideAllOverlays();
+  show($("menuOverlay"), true);
+  show($("hud"), false);
+  updateMenu();
+  updateSoundLabels();
+  Music.stop();
+  // Demo factory behind the menu: a level-3 scene that plays itself.
+  G.demoLs = newLevelState(levelConfig(3), 7);
+  G.demoRng = mulberry32(7);
+}
+function showLevelIntro(level) {
+  var cfg = levelConfig(level);
+  G.level = level;
+  setState("intro");
+  hideAllOverlays();
+  show($("levelIntroOverlay"), true);
+  show($("hud"), false);
+  $("levelIntroTitle").textContent = "Level " + level + (cfg.rush ? " — RUSH!" : "");
+  $("levelIntroText").textContent = "Sort " + cfg.quota + " gears before the timer runs out." + (cfg.mechanic ? " " + cfg.mechanic : "");
+  var badgeRow = $("levelIntroBadgeRow");
+  badgeRow.innerHTML = "";
+  if (cfg.rush) {
+    var badge = document.createElement("span");
+    badge.className = "rushBadge";
+    badge.textContent = "RUSH — quota +25%, timer -20%, score x2";
+    badgeRow.appendChild(badge);
+  }
+  $("levelIntroQuota").textContent = String(cfg.quota);
+  $("levelIntroTimer").textContent = fmtTime(cfg.timer);
+  $("levelIntroBelts").textContent = String(cfg.belts);
+  Music.stop();
+}
+function startLevel(level) {
+  var cfg = levelConfig(level);
+  G.level = level;
+  G.ls = newLevelState(cfg, level);
+  G.rng = mulberry32(level);
+  G.particles = []; G.floaters = []; G.shake = 0; G.flash = 0;
+  G.tutDone = false; G.comboBanner = null;
+  G.machinePulse = [0, 0, 0]; G.machineShake = [0, 0, 0]; G.arrowFlash = null;
+  setState("playing");
+  hideAllOverlays();
+  show($("hud"), true);
+  updateHUD();
+  try { CG.gameplayStart(); } catch (e) {}
+  Music.start();
+  announce("Level " + level + " started. Sort " + cfg.quota + " gears.");
+  if (cfg.mechanic) toast(cfg.mechanic, 2600);
+}
+function bankCoins() {
+  if (!G.ls) return 0;
+  var c = G.ls.coinsRun;
+  if (c > 0) { SAVE.coins += c; G.ls.coinsRun = 0; persistSave(); }
+  return c;
+}
+function onLevelComplete(stars) {
+  var ls = G.ls;
+  var coinsEarned = bankCoins();
+  var prevStars = SAVE.stars[ls.level] || 0;
+  SAVE.stars[ls.level] = Math.max(prevStars, stars);
+  SAVE.unlocked = Math.max(SAVE.unlocked, Math.min(MAX_LEVEL, ls.level + 1));
+  SAVE.bestScore = Math.max(SAVE.bestScore, ls.score);
+  persistSave();
+  setState("complete");
+  hideAllOverlays();
+  show($("levelCompleteOverlay"), true);
+  show($("hud"), false);
+  var row = $("starsRow");
+  row.innerHTML = "";
+  for (var i = 1; i <= 3; i++) {
+    var s = document.createElement("span");
+    s.textContent = "\u2605";
+    if (i > stars) s.className = "dim";
+    row.appendChild(s);
+  }
+  $("levelCompleteText").textContent = "All " + ls.cfg.quota + " gears sorted — the line keeps rolling!";
+  $("completeScore").textContent = String(ls.score);
+  $("completeCoins").textContent = String(coinsEarned);
+  $("completeBest").textContent = String(SAVE.bestScore);
+  try { CG.gameplayStop(); CG.setContext(ls.level, ls.score); CG.happytime(); } catch (e) {}
+  AudioSys.win();
+  AudioSys.coin();
+  burstConfetti();
+  Music.stop();
+}
+function onGameOver(reason) {
+  var ls = G.ls;
+  var coinsEarned = bankCoins();
+  setState("over");
+  hideAllOverlays();
+  show($("gameOverOverlay"), true);
+  show($("hud"), false);
+  $("gameOverTitle").textContent = reason === "lives" ? "Out of Lives!" : "Time's Up!";
+  $("gameOverText").textContent = reason === "lives"
+    ? "Three wrong machines — the gears piled up. Try again!"
+    : "The timer ran out with " + (ls.cfg.quota - ls.sorted) + " gears still to sort.";
+  $("overScore").textContent = String(ls.score);
+  $("overSorted").textContent = String(ls.sorted);
+  $("overQuota").textContent = String(ls.cfg.quota);
+  $("overCoins").textContent = String(coinsEarned);
+  try { CG.gameplayStop(); CG.setContext(ls.level, ls.score); } catch (e) {}
+  AudioSys.lose();
+  Music.stop();
+}
+function pauseGame() {
+  if (G.state !== "playing") return;
+  G.pausedFrom = "playing";
+  setState("paused");
+  try { CG.gameplayStop(); } catch (e) {}
+  show($("pauseOverlay"), true);
+  $("pauseInfo").textContent = "Level " + G.level + " — Score " + (G.ls ? G.ls.score : 0);
+  Music.stop();
+  AudioSys.click();
+}
+function resumeGame() {
+  if (G.state !== "paused") return;
+  show($("pauseOverlay"), false);
+  setState("playing");
+  try { CG.gameplayStart(); } catch (e) {}
+  Music.start();
+  AudioSys.click();
+}
+function openHowto(from) {
+  G.howtoFrom = from || "menu";
+  if (G.state === "playing") {
+    G.pausedFrom = "howto";
+    setState("paused");
+    Music.stop();
+  }
+  show($("howtoOverlay"), true);
+  if (G.howtoFrom === "menu") show($("menuOverlay"), false);
+}
+function closeHowto() {
+  show($("howtoOverlay"), false);
+  if (G.howtoFrom === "menu") {
+    showMenu();
+  } else if (G.pausedFrom === "howto") {
+    // Came from a running game: back to the pause overlay.
+    setState("paused");
+    show($("pauseOverlay"), true);
+    $("pauseInfo").textContent = "Level " + G.level + " — Score " + (G.ls ? G.ls.score : 0);
+  }
+  AudioSys.click();
+}
+function toggleMute() {
+  SAVE.muted = !SAVE.muted;
+  persistSave();
+  updateSoundLabels();
+  if (SAVE.muted) Music.stop();
+  else if (G.state === "playing") Music.start();
+  if (!SAVE.muted) AudioSys.click();
+}
+function quitToMenu() { showMenu(); AudioSys.click(); }
+
+/* ---- particles / floaters ---- */
+function spawnParticle(p) { G.particles.push(p); }
+function sparkBurst(x, y, color) {
+  if (reducedMotion) return;
+  for (var i = 0; i < 10; i++) {
+    var a = Math.random() * 6.283, sp = 60 + Math.random() * 140;
+    spawnParticle({ x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40, life: 0.5, max: 0.5, color: color, size: 3 + Math.random() * 3, shape: "spark" });
+  }
+}
+function smokePuff(x, y) {
+  if (reducedMotion) return;
+  for (var i = 0; i < 8; i++) {
+    spawnParticle({ x: x + (Math.random() - 0.5) * 30, y: y + (Math.random() - 0.5) * 10, vx: (Math.random() - 0.5) * 30, vy: -20 - Math.random() * 30, life: 0.8, max: 0.8, color: "#8a8f98", size: 6 + Math.random() * 6, shape: "smoke" });
+  }
+}
+function burstConfetti() {
+  if (reducedMotion) return;
+  var colors = ["#F5A623", "#4AA8E0", "#E85D4A", "#58C472", "#FFD166"];
+  for (var i = 0; i < 40; i++) {
+    spawnParticle({ x: 60 + Math.random() * 840, y: -10 - Math.random() * 60, vx: (Math.random() - 0.5) * 60, vy: 90 + Math.random() * 120, life: 1.6, max: 1.6, color: colors[i % colors.length], size: 5 + Math.random() * 5, shape: "gear", rot: Math.random() * 6.283, vr: (Math.random() - 0.5) * 6 });
+  }
+}
+function addFloater(x, y, text, color) {
+  G.floaters.push({ x: x, y: y, text: text, life: 1.0, max: 1.0, color: color || "#FFD166" });
+}
+function updateParticles(dt) {
+  for (var i = G.particles.length - 1; i >= 0; i--) {
+    var p = G.particles[i];
+    p.life -= dt;
+    if (p.life <= 0) { G.particles.splice(i, 1); continue; }
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    if (p.shape === "spark") p.vy += 260 * dt;
+    if (p.shape === "gear") { p.vy += 60 * dt; p.rot += p.vr * dt; }
+    if (p.shape === "smoke") { p.vy -= 10 * dt; p.size += 6 * dt; }
+  }
+  for (var j = G.floaters.length - 1; j >= 0; j--) {
+    var f = G.floaters[j];
+    f.life -= dt; f.y -= 34 * dt;
+    if (f.life <= 0) G.floaters.splice(j, 1);
+  }
+}
+
+/* ---- simulation step + event handling ---- */
+function handleEvents(evs) {
+  var ls = G.ls;
+  for (var i = 0; i < evs.length; i++) {
+    var ev = evs[i];
+    if (ev.t === "tick") { AudioSys.tick(); }
+    else if (ev.t === "correct") {
+      var mx = machineX(ev.gear.dir);
+      AudioSys.ding(ev.combo);
+      sparkBurst(mx, MACHINE_MOUTH_Y, GEAR_COLORS[ev.gear.type]);
+      addFloater(mx, MACHINE_MOUTH_Y - 24, "+" + ev.points, ev.gear.golden ? "#FFD166" : "#F4EAD8");
+      G.machinePulse[ev.gear.dir] = 1;
+      if (ev.mult >= 2 && ev.combo > 0 && (ev.combo - 1) % 5 === 0) {
+        // combo milestone just crossed x2 / x3 / x5
+        G.comboBanner = "COMBO x" + ev.mult + "!";
+        G.comboBannerUntil = G.time + 1.2;
+        sparkBurst(mx, MACHINE_MOUTH_Y - 30, "#FFD166");
+      }
+      if (ls && ls.level === 1) G.tutDone = true;
+    } else if (ev.t === "wrong") {
+      var wx = machineX(ev.gear.dir);
+      AudioSys.buzz();
+      G.flash = 1; G.shake = 8;
+      smokePuff(wx, MACHINE_MOUTH_Y);
+      G.machineShake[ev.gear.dir] = 0.5;
+      toast("Wrong machine!", 1200);
+    } else if (ev.t === "win") {
+      onLevelComplete(ev.stars);
+    } else if (ev.t === "lose") {
+      onGameOver(ev.reason);
+    }
+  }
+}
+function stepGame(dt) {
+  G.time += dt; G.animT += dt;
+  updateParticles(dt);
+  if (G.shake > 0) G.shake = Math.max(0, G.shake - dt * 30);
+  if (G.flash > 0) G.flash = Math.max(0, G.flash - dt * 2.5);
+  for (var m = 0; m < 3; m++) {
+    if (G.machinePulse[m] > 0) G.machinePulse[m] = Math.max(0, G.machinePulse[m] - dt * 3);
+    if (G.machineShake[m] > 0) G.machineShake[m] = Math.max(0, G.machineShake[m] - dt * 2);
+  }
+  if (G.state === "playing" && G.ls) {
+    var evs = levelStep(G.ls, dt, G.rng);
+    handleEvents(evs);
+    updateHUD();
+  } else if (G.state === "menu" && G.demoLs) {
+    // Demo factory behind the menu plays itself.
+    var dls = G.demoLs;
+    for (var b = 0; b < dls.cfg.belts; b++) {
+      var best = null;
+      for (var i = 0; i < dls.gears.length; i++) {
+        var g = dls.gears[i];
+        if (g.belt === b && g.state === "fall" && (!best || g.y > best.y)) best = g;
+      }
+      if (best) setDiverter(dls, b, machineIndexForType(best.type));
+    }
+    levelStep(dls, dt, G.demoRng);
+    if (dls.over) { G.demoLs = newLevelState(levelConfig(3), 7); G.demoRng = mulberry32(7); }
+  }
+}
+
+/* ---- input: canvas tap (diverter lever = cycle, chute arrow = set direct) ---- */
+function hitTest(p) {
+  var ls = G.ls;
+  if (!ls) return null;
+  var centers = beltCenters(ls.cfg.belts);
+  for (var b = 0; b < centers.length; b++) {
+    var bx = centers[b];
+    // chute arrows (3 per belt, under the diverter)
+    for (var d = 0; d < 3; d++) {
+      var ax = bx + (d - 1) * 64, ay = 452;
+      if (Math.abs(p.x - ax) <= 19 && Math.abs(p.y - ay) <= 15) return { kind: "arrow", belt: b, dir: d };
+    }
+    // diverter lever circle
+    var dx = p.x - bx, dy = p.y - JUNCTION_Y;
+    if (dx * dx + dy * dy <= 32 * 32) return { kind: "diverter", belt: b };
+  }
+  return null;
+}
+function onCanvasTap(clientX, clientY) {
+  if (G.state !== "playing" || !G.ls) return false;
+  var h = hitTest(canvasToPoint(clientX, clientY));
+  if (!h) return false;
+  AudioSys.ensure();
+  if (h.kind === "arrow") {
+    setDiverter(G.ls, h.belt, h.dir);
+    G.arrowFlash = { belt: h.belt, dir: h.dir, until: G.time + 0.25 };
+  } else {
+    flipDiverter(G.ls, h.belt);
+  }
+  AudioSys.clunk();
+  updateHUD();
+  draw();
+  return true;
+}
+function bindClick(id, fn) {
+  var b = $(id);
+  if (b) b.addEventListener("click", function () { AudioSys.ensure(); fn(); });
+}
+
+/* ---- canvas drawing ---- */
+function rr(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+function drawGearAt(x, y, gear, scale) {
+  var s = scale || 1;
+  var R = 24 * s;
+  var col = GEAR_COLORS[gear.type], dark = GEAR_DARK[gear.type];
+  ctx.save();
+  ctx.translate(x, y);
+  // teeth (rotate with the gear)
+  ctx.save();
+  ctx.rotate(gear.rot || 0);
+  ctx.fillStyle = dark;
+  var teeth = gear.type === "square" ? 4 : gear.type === "hex" ? 6 : 8;
+  for (var i = 0; i < teeth; i++) {
+    var a = (i / teeth) * Math.PI * 2;
+    ctx.save();
+    ctx.rotate(a);
+    ctx.fillRect(R - 2, -4 * s, 8 * s, 8 * s);
+    ctx.restore();
+  }
+  // body shape (rotates too)
+  ctx.fillStyle = col;
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 2 * s;
+  ctx.beginPath();
+  if (gear.type === "round") {
+    ctx.arc(0, 0, R, 0, Math.PI * 2);
+  } else if (gear.type === "square") {
+    var h = R * 0.92;
+    rr(-h, -h, h * 2, h * 2, 6 * s);
+  } else {
+    for (var k = 0; k < 6; k++) {
+      var ha = (k / 6) * Math.PI * 2 - Math.PI / 6;
+      var hx = Math.cos(ha) * R, hy = Math.sin(ha) * R;
+      if (k === 0) ctx.moveTo(hx, hy); else ctx.lineTo(hx, hy);
+    }
+    ctx.closePath();
+  }
+  ctx.fill(); ctx.stroke();
+  ctx.restore();
+  // hub + friendly rivet face (stays upright)
+  ctx.fillStyle = "rgba(255,255,255,0.28)";
+  ctx.beginPath(); ctx.arc(0, 0, R * 0.42, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#231303";
+  ctx.beginPath(); ctx.arc(-6 * s, -3 * s, 2.2 * s, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(6 * s, -3 * s, 2.2 * s, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#231303"; ctx.lineWidth = 2 * s; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.arc(0, 3 * s, 6 * s, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+  // golden sheen
+  if (gear.golden) {
+    var grad = ctx.createRadialGradient(-8 * s, -10 * s, 2, 0, 0, R * 1.2);
+    grad.addColorStop(0, "rgba(255,255,220,0.85)");
+    grad.addColorStop(0.5, "rgba(255,215,80,0.25)");
+    grad.addColorStop(1, "rgba(255,215,80,0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "#FFF3B0"; ctx.lineWidth = 1.6 * s;
+    ctx.beginPath();
+    ctx.moveTo(12 * s, -16 * s); ctx.lineTo(15 * s, -9 * s); ctx.lineTo(12 * s, -2 * s); ctx.lineTo(9 * s, -9 * s); ctx.closePath();
+    ctx.fillStyle = "#FFF3B0"; ctx.fill();
+  }
+  // express chevron (drawn, not an emoji)
+  if (gear.express) {
+    ctx.strokeStyle = "#FFFFFF"; ctx.lineWidth = 3 * s; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.beginPath(); ctx.moveTo(2 * s, -7 * s); ctx.lineTo(10 * s, 0); ctx.lineTo(2 * s, 7 * s); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-5 * s, -7 * s); ctx.lineTo(3 * s, 0); ctx.lineTo(-5 * s, 7 * s); ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawCoin(c, x, y, r) {
+  c.save();
+  c.translate(x, y);
+  c.fillStyle = "#FFD94D"; c.strokeStyle = "#B97A0E"; c.lineWidth = 1.5;
+  c.beginPath(); c.arc(0, 0, r, 0, Math.PI * 2); c.fill(); c.stroke();
+  c.fillStyle = "#FFF3B0";
+  c.beginPath(); c.arc(0, 0, r * 0.45, 0, Math.PI * 2); c.fill();
+  c.restore();
+}
+function draw() {
+  var ls = G.ls || G.demoLs;
+  var t = theme();
+  ctx.save();
+  if (G.shake > 0.2) ctx.translate((Math.random() - 0.5) * G.shake, (Math.random() - 0.5) * G.shake);
+  // background
+  var bg = ctx.createLinearGradient(0, 0, 0, 600);
+  bg.addColorStop(0, t.bg1); bg.addColorStop(0.55, t.bg2); bg.addColorStop(1, "#0A1E22");
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, 960, 600);
+  // factory rivets along the top + side pipes
+  ctx.fillStyle = "rgba(232,163,61,0.25)";
+  for (var rx = 20; rx < 960; rx += 60) { ctx.beginPath(); ctx.arc(rx, 58, 3, 0, Math.PI * 2); ctx.fill(); }
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.fillRect(0, 0, 14, 600); ctx.fillRect(946, 0, 14, 600);
+  ctx.fillStyle = t.rail;
+  ctx.fillRect(14, 0, 4, 600); ctx.fillRect(942, 0, 4, 600);
+  var belts = ls ? ls.cfg.belts : 3;
+  var centers = beltCenters(belts);
+  // belts
+  for (var b = 0; b < belts; b++) {
+    var bx = centers[b];
+    ctx.fillStyle = t.beltDark;
+    rr(bx - 55, BELT_TOP_Y - 8, 110, JUNCTION_Y - BELT_TOP_Y + 16, 10); ctx.fill();
+    ctx.fillStyle = t.belt;
+    ctx.fillRect(bx - 48, BELT_TOP_Y, 96, JUNCTION_Y - BELT_TOP_Y);
+    // rails
+    ctx.fillStyle = t.rail;
+    ctx.fillRect(bx - 55, BELT_TOP_Y - 8, 5, JUNCTION_Y - BELT_TOP_Y + 16);
+    ctx.fillRect(bx + 50, BELT_TOP_Y - 8, 5, JUNCTION_Y - BELT_TOP_Y + 16);
+    // moving chevrons (down the belt)
+    var spd = ls ? ls.cfg.speed : 60;
+    var off = (G.time * spd * 0.45) % 28;
+    ctx.strokeStyle = "rgba(244,234,216,0.28)"; ctx.lineWidth = 3; ctx.lineCap = "round";
+    for (var cy = BELT_TOP_Y + 14 - off; cy < JUNCTION_Y - 10; cy += 28) {
+      ctx.beginPath();
+      ctx.moveTo(bx - 16, cy); ctx.lineTo(bx, cy + 9); ctx.lineTo(bx + 16, cy);
+      ctx.stroke();
+    }
+    // belt label (B1/B2/B3) + key hint
+    ctx.fillStyle = "rgba(244,234,216,0.55)";
+    ctx.font = "800 11px 'Trebuchet MS', Verdana, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("BELT " + (b + 1) + "  [" + (b + 1) + "]", bx, BELT_TOP_Y - 14);
+  }
+  // machines
+  for (var m = 0; m < 3; m++) {
+    var mx = machineX(m);
+    var mtype = GEAR_TYPES[m];
+    var mcol = GEAR_COLORS[mtype];
+    var shakeX = G.machineShake[m] > 0 ? (Math.random() - 0.5) * 6 * G.machineShake[m] : 0;
+    ctx.save();
+    ctx.translate(shakeX, 0);
+    // body
+    ctx.fillStyle = "#123B42";
+    rr(mx - 95, 478, 190, 88, 12); ctx.fill();
+    ctx.strokeStyle = mcol; ctx.lineWidth = 3; ctx.stroke();
+    // coloured light on top (pulses on a correct sort)
+    var pulse = G.machinePulse[m];
+    ctx.fillStyle = mcol;
+    ctx.globalAlpha = 0.55 + 0.45 * pulse;
+    ctx.beginPath(); ctx.arc(mx, 488, 7 + 3 * pulse, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+    // intake mouth
+    ctx.fillStyle = "#06181B";
+    rr(mx - 32, 500, 64, 16, 6); ctx.fill();
+    ctx.strokeStyle = "rgba(244,234,216,0.35)"; ctx.lineWidth = 1.5; ctx.stroke();
+    // shape icon + label
+    ctx.strokeStyle = mcol; ctx.fillStyle = mcol; ctx.lineWidth = 3;
+    ctx.beginPath();
+    if (mtype === "round") ctx.arc(mx, 538, 11, 0, Math.PI * 2);
+    else if (mtype === "square") rr(mx - 10, 528, 20, 20, 3);
+    else {
+      for (var hk = 0; hk < 6; hk++) {
+        var ha = (hk / 6) * Math.PI * 2 - Math.PI / 6;
+        var hx = mx + Math.cos(ha) * 12, hy = 538 + Math.sin(ha) * 12;
+        if (hk === 0) ctx.moveTo(hx, hy); else ctx.lineTo(hx, hy);
+      }
+      ctx.closePath();
+    }
+    ctx.stroke();
+    ctx.fillStyle = "#F4EAD8";
+    ctx.font = "900 13px 'Trebuchet MS', Verdana, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(mtype.toUpperCase() + " PRESS", mx, 560);
+    ctx.restore();
+  }
+  // diverters + chute arrows
+  for (var db = 0; db < belts; db++) {
+    var dbx = centers[db];
+    var dir = ls ? ls.diverters[db] : 1;
+    // active chute only (the 3 coloured arrows under the lever show the
+    // other exits — drawing all 3 pipes per belt crossed into a web
+    // with 2-3 belts, see QA#2)
+    ctx.strokeStyle = GEAR_COLORS[GEAR_TYPES[dir]];
+    ctx.globalAlpha = 0.5; ctx.lineWidth = 10;
+    ctx.beginPath();
+    ctx.moveTo(dbx, JUNCTION_Y + 8);
+    ctx.quadraticCurveTo(dbx + (machineX(dir) - dbx) * 0.5, JUNCTION_Y + 34, machineX(dir), MACHINE_MOUTH_Y - 4);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    // chute arrows (tap to set directly) — coloured by machine
+    for (var ad = 0; ad < 3; ad++) {
+      var ax = dbx + (ad - 1) * 64, ay = 452;
+      var active = ad === dir;
+      var flashed = G.arrowFlash && G.arrowFlash.belt === db && G.arrowFlash.dir === ad && G.time < G.arrowFlash.until;
+      ctx.fillStyle = GEAR_COLORS[GEAR_TYPES[ad]];
+      ctx.globalAlpha = active || flashed ? 1 : 0.55;
+      ctx.beginPath();
+      if (ad === 0) { ctx.moveTo(ax - 12, ay - 8); ctx.lineTo(ax + 2, ay); ctx.lineTo(ax - 12, ay + 8); }
+      else if (ad === 1) { ctx.moveTo(ax - 9, ay + 8); ctx.lineTo(ax, ay - 9); ctx.lineTo(ax + 9, ay + 8); }
+      else { ctx.moveTo(ax + 12, ay - 8); ctx.lineTo(ax - 2, ay); ctx.lineTo(ax + 12, ay + 8); }
+      ctx.closePath(); ctx.fill();
+      ctx.globalAlpha = 1;
+      if (active) {
+        ctx.strokeStyle = "#FFF3B0"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(ax, ay, 15, 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+    // diverter lever (tap to cycle)
+    ctx.fillStyle = "#0A2226";
+    ctx.beginPath(); ctx.arc(dbx, JUNCTION_Y, 30, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = t.rail; ctx.lineWidth = 3; ctx.stroke();
+    var ang = dir === 0 ? Math.PI : dir === 1 ? Math.PI / 2 : 0;
+    ctx.strokeStyle = "#F4EAD8"; ctx.lineWidth = 5; ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(dbx, JUNCTION_Y);
+    ctx.lineTo(dbx + Math.cos(ang) * 20, JUNCTION_Y + Math.sin(ang) * 20);
+    ctx.stroke();
+    ctx.fillStyle = GEAR_COLORS[GEAR_TYPES[dir]];
+    ctx.beginPath(); ctx.arc(dbx, JUNCTION_Y, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "#231303"; ctx.lineWidth = 1.5; ctx.stroke();
+  }
+  // gears
+  if (ls) {
+    for (var gi = 0; gi < ls.gears.length; gi++) {
+      var gear = ls.gears[gi];
+      var gx, gy;
+      if (gear.state === "chute") {
+        var cx0 = beltX(gear.belt, ls.cfg.belts), cx1 = machineX(gear.dir);
+        var tt = Math.min(1, gear.chuteT);
+        var e = tt * tt * (3 - 2 * tt); // smoothstep
+        gx = cx0 + (cx1 - cx0) * e;
+        gy = JUNCTION_Y + (MACHINE_MOUTH_Y - JUNCTION_Y) * e;
+      } else {
+        gx = beltX(gear.belt, ls.cfg.belts);
+        gy = gear.y;
+      }
+      drawGearAt(gx, gy, gear, 1);
+    }
+  }
+  // particles
+  for (var pi = 0; pi < G.particles.length; pi++) {
+    var p = G.particles[pi];
+    ctx.globalAlpha = Math.max(0, p.life / p.max);
+    ctx.fillStyle = p.color;
+    if (p.shape === "gear") {
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot || 0);
+      ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
+      ctx.restore();
+    } else {
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+  // floaters
+  ctx.textAlign = "center";
+  for (var fi = 0; fi < G.floaters.length; fi++) {
+    var f = G.floaters[fi];
+    ctx.globalAlpha = Math.max(0, f.life / f.max);
+    ctx.fillStyle = f.color;
+    ctx.font = "900 20px 'Trebuchet MS', Verdana, sans-serif";
+    ctx.fillText(f.text, f.x, f.y);
+    ctx.globalAlpha = 1;
+  }
+  // L1 tutorial bubble (until the first correct sort) — sits in the empty
+  // space LEFT of the first belt so it never covers falling gears (QA#2).
+  if (G.state === "playing" && ls && ls.level === 1 && !G.tutDone) {
+    var tbx = Math.max(175, centers[0] - 305);
+    ctx.fillStyle = "rgba(8,26,30,0.92)";
+    rr(tbx - 150, 300, 300, 44, 12); ctx.fill();
+    ctx.strokeStyle = "#FFD166"; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = "#FFD166";
+    ctx.font = "900 15px 'Trebuchet MS', Verdana, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Tap the lever to flip the diverter!", tbx, 319);
+    // pointer triangle on the right edge, gesturing toward the belt
+    ctx.beginPath(); ctx.moveTo(tbx + 150, 312); ctx.lineTo(tbx + 150, 330); ctx.lineTo(tbx + 166, 321); ctx.closePath(); ctx.fill();
+  }
+  // combo milestone banner
+  if (G.comboBanner && G.time < G.comboBannerUntil) {
+    ctx.fillStyle = "rgba(8,26,30,0.85)";
+    rr(330, 180, 300, 52, 14); ctx.fill();
+    ctx.strokeStyle = "#FFD166"; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = "#FFD166";
+    ctx.font = "900 26px 'Trebuchet MS', Verdana, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(G.comboBanner, 480, 215);
+  }
+  // wrong-sort red flash
+  if (G.flash > 0) {
+    ctx.fillStyle = "rgba(228,87,46," + (G.flash * 0.22) + ")";
+    ctx.fillRect(0, 0, 960, 600);
+  }
+  ctx.restore();
+}
+
+/* ---- bindings ---- */
+bindClick("btnPlay", function () { AudioSys.click(); showLevelIntro(SAVE.unlocked); });
+bindClick("btnHowTo", function () { AudioSys.click(); openHowto("menu"); });
+bindClick("btnHowToGotIt", function () { closeHowto(); });
+bindClick("btnSortStart", function () { AudioSys.click(); startLevel(G.level); });
+bindClick("btnNextLevel", function () { AudioSys.click(); showLevelIntro(Math.min(MAX_LEVEL, G.level + 1)); });
+bindClick("btnReplayLevel", function () { AudioSys.click(); showLevelIntro(G.level); });
+bindClick("btnCompleteMenu", function () { quitToMenu(); });
+bindClick("btnRetry", function () { AudioSys.click(); showLevelIntro(G.level); });
+bindClick("btnOverMenu", function () { quitToMenu(); });
+bindClick("btnPause", function () { pauseGame(); });
+bindClick("btnResume", function () { resumeGame(); });
+bindClick("btnQuitLevel", function () { quitToMenu(); });
+bindClick("btnSound", function () { toggleMute(); });
+bindClick("btnMenuSound", function () { toggleMute(); });
+canvas.addEventListener("pointerdown", function (ev) {
+  ev.preventDefault();
+  onCanvasTap(ev.clientX, ev.clientY);
+});
+document.addEventListener("keydown", function (ev) {
+  var k = ev.key;
+  if (k === "m" || k === "M") { toggleMute(); return; }
+  if (k === "Escape") {
+    if (G.state === "playing") pauseGame();
+    else if (G.state === "paused" && !$("howtoOverlay").classList.contains("hidden")) { /* how-to open: ignore */ }
+    else if (G.state === "paused") resumeGame();
+    return;
+  }
+  if (k === " ") {
+    ev.preventDefault();
+    if (G.state === "playing") pauseGame();
+    else if (G.state === "paused" && $("howtoOverlay").classList.contains("hidden")) resumeGame();
+    return;
+  }
+  if (G.state !== "playing" || !G.ls) return;
+  if (k === "1" || k === "2" || k === "3") {
+    var b = parseInt(k, 10) - 1;
+    if (b < G.ls.cfg.belts) { AudioSys.ensure(); flipDiverter(G.ls, b); AudioSys.clunk(); updateHUD(); draw(); }
+  }
+});
+document.addEventListener("visibilitychange", function () {
+  if (document.hidden && G.state === "playing") pauseGame();
+});
+
+/* ---- main loop ---- */
+function frame(ts) {
+  var dt = Math.min(0.05, (ts - lastFrame) / 1000 || 0.016);
+  lastFrame = ts;
+  acc += dt;
+  while (acc >= 1 / 60) { stepGame(1 / 60); acc -= 1 / 60; }
+  draw();
+  requestAnimationFrame(frame);
+}
+
+/* ---- boot ---- */
+(function boot() {
+  G.machinePulse = [0, 0, 0];
+  G.machineShake = [0, 0, 0];
+  G.arrowFlash = null;
+  updateSoundLabels();
+  if (!SAVE.seenHowto) {
+    showMenu();
+    show($("menuOverlay"), false);
+    openHowto("menu");
+    SAVE.seenHowto = true;
+    persistSave();
+  } else {
+    showMenu();
+  }
+  window.__gameReady = true;
+  requestAnimationFrame(frame);
+})();
+
+/* ---- test hook ---- */
+window.__SprocketSortTest = {
+  G: G, SAVE: SAVE, CG: CG, AudioSys: AudioSys, Music: Music,
+  MAX_LEVEL: MAX_LEVEL, GEAR_TYPES: GEAR_TYPES, GEAR_COLORS: GEAR_COLORS,
+  DIRS: DIRS, BELT_TOP_Y: BELT_TOP_Y, JUNCTION_Y: JUNCTION_Y,
+  MACHINE_MOUTH_Y: MACHINE_MOUTH_Y, CHUTE_TIME: CHUTE_TIME, ANTI_JAM_S: ANTI_JAM_S,
+  mulberry32: mulberry32, clamp: clamp,
+  THEMES: THEMES, themeForUnlocked: themeForUnlocked, themeUnlocked: themeUnlocked,
+  LEVEL_TABLE: LEVEL_TABLE, levelConfig: levelConfig, quotaFor: quotaFor,
+  timerFor: timerFor, beltsFor: beltsFor, typesFor: typesFor,
+  comboMultiplier: comboMultiplier, scoreForSort: scoreForSort,
+  starsForResult: starsForResult, machineIndexForType: machineIndexForType,
+  defaultSave: defaultSave, loadSave: loadSave, saveSave: saveSave,
+  newLevelState: newLevelState, flipDiverter: flipDiverter, setDiverter: setDiverter,
+  pickSpawnBelt: pickSpawnBelt, spawnGear: spawnGear, levelStep: levelStep,
+  simulateLevel: simulateLevel,
+  startLevel: startLevel, showMenu: showMenu, showLevelIntro: showLevelIntro,
+  onLevelComplete: onLevelComplete, onGameOver: onGameOver,
+  pauseGame: pauseGame, resumeGame: resumeGame, openHowto: openHowto,
+  closeHowto: closeHowto, toggleMute: toggleMute, quitToMenu: quitToMenu,
+  beltCenters: beltCenters, machineX: machineX, beltX: beltX,
+  canvasToPoint: canvasToPoint, hitTest: hitTest, onCanvasTap: onCanvasTap,
+  stepGame: stepGame, draw: draw, drawGearAt: drawGearAt, drawCoin: drawCoin,
+  updateHUD: updateHUD, renderLevelGrid: renderLevelGrid, buildThemeRow: buildThemeRow,
+  updateMenu: updateMenu, fmtTime: fmtTime,
+};
+</script>
+</body>
+</html>
