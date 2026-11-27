@@ -1,0 +1,2105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Pebblehold — Draft the road, hold the valley!</title>
+<!--
+  Pebblehold — original HTML5 tower-defence roguelite.
+  100% code-drawn (Canvas 2D + CSS), no images, no audio files, no
+  external URLs. Seeded RNG (mulberry32), localStorage save
+  "pebblehold_save_v1".
+
+  HOW TO PLAY: before each wave you draft the road — pick a tile from
+  your hand (straight, corner, bridge) and tap a glowing cell next to
+  the road end to lay it. Enemies march the road YOU built, so a long
+  winding road gives your towers more time to shoot. Then spend gold
+  on towers on the grass beside the road, and press START WAVE.
+  After each cleared wave, pick 1 of 3 draft cards (new tower, upgrade
+  or relic). Hold the Keep for 12 waves to win the run — then Endless.
+  - Sling Post: fast pebbles, cheap (40 gold), range 2.5.
+  - Boulder Lobber: slow arcing boulder, splash damage (90 gold).
+  - Frost Bloom: slows enemies 40% in range (70 gold).
+  - Spark Obelisk: chain lightning to 3 enemies (140 gold, wave 4+).
+  - Towers upgrade twice; sell returns 65%.
+  Enemies: Runner (fast), Grunt, Shielded (armour — Sling damage
+  halved), Swarm (many tiny), Flyer (wave 6+, only Sling + Spark can
+  hit, ignores Frost), Brute boss every 5th wave (leak costs 3 hearts).
+  A leaked enemy costs Keep hearts: Grunt/Runner/Swarm 1, Shielded/
+  Flyer 2, Brute 3. 0 hearts = run over (you keep your meta coins).
+  Sounds are tiny WebAudio oscillator/noise blips with a mute toggle.
+  No audio files. Keyboard: 1/2/3 pick hand tiles, Q/W/E/R pick tower
+  types, Space starts the wave / toggles speed, Esc pauses, M mutes.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: #141f1a;
+    font-family: "Trebuchet MS", "Segoe UI", Verdana, sans-serif;
+    color: #f4ead8; overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none; -webkit-user-select: none;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #game {
+    position: relative; width: 100%; max-width: 960px; height: 100%;
+    max-height: 600px; margin: 0 auto; aspect-ratio: 960 / 600;
+    background: linear-gradient(180deg, #2a3f34 0%, #22312b 55%, #1a2620 100%);
+    overflow: hidden;
+  }
+  @media (min-aspect-ratio: 960/600) { #game { height: 100vh; width: auto; } }
+  canvas#boardCanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; object-fit: contain; }
+  .hidden { display: none !important; }
+
+  /* ---- HUD top bar ---- */
+  #hud {
+    position: absolute; left: 0; right: 0; top: 0; z-index: 5;
+    display: flex; align-items: center; gap: 6px; padding: 7px 9px;
+    pointer-events: none;
+  }
+  #hud .pill {
+    background: rgba(10, 20, 15, 0.85); border: 1px solid rgba(122, 178, 122, 0.4);
+    border-radius: 999px; padding: 6px 11px; font-weight: 800; font-size: 14px;
+    color: #f4ead8; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+  }
+  #hud .pill.wave { color: #bfe3b0; }
+  #hud .pill.hearts { color: #ff8a7a; }
+  #hud .pill.hearts.low { color: #ff5d5d; animation: pulse 0.5s infinite alternate; }
+  #hud .pill.gold { color: #ffd166; }
+  #hud .pill.score { color: #f4ead8; }
+  #hud .pill.foes { color: #ffb37a; }
+  @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.08); } }
+  #waveBar {
+    flex: 1; height: 10px; min-width: 40px; background: rgba(10,20,15,0.85);
+    border: 1px solid rgba(122,178,122,0.4); border-radius: 999px; overflow: hidden;
+  }
+  #waveBarFill { height: 100%; width: 0%; background: linear-gradient(90deg, #4a7a52, #7fc86a); transition: width 0.25s; }
+  .iconBtn {
+    pointer-events: auto; width: 36px; height: 36px; border-radius: 12px;
+    border: 1px solid rgba(122, 178, 122, 0.5); background: rgba(16, 32, 24, 0.92);
+    color: #f4ead8; font-size: 15px; font-weight: 900; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4); font-family: inherit;
+  }
+  .iconBtn:active { transform: scale(0.92); }
+  .iconBtn.on { background: #4a7a52; color: #fff; border-color: #7fc86a; }
+  /* HUD text button (Sound) — .iconBtn is a fixed 36px square and cannot
+     hold text; this one sizes to its label. */
+  .hudBtn {
+    pointer-events: auto; border-radius: 12px; padding: 0 10px; height: 36px;
+    border: 1px solid rgba(122, 178, 122, 0.5); background: rgba(16, 32, 24, 0.92);
+    color: #f4ead8; font-size: 13px; font-weight: 900; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4); font-family: inherit; white-space: nowrap;
+  }
+  .hudBtn:active { transform: scale(0.95); }
+  .coinSvg { width: 15px; height: 15px; display: inline-block; vertical-align: -2px; }
+  .statBox .coinSvg { width: 18px; height: 18px; vertical-align: -4px; }
+  .heartSvg { width: 15px; height: 15px; display: inline-block; vertical-align: -2px; }
+
+  /* ---- bottom action bar ---- */
+  #actionBar {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 5;
+    display: flex; align-items: stretch; gap: 8px; padding: 8px 10px;
+    background: linear-gradient(180deg, rgba(20,31,26,0) 0%, rgba(20,31,26,0.92) 45%);
+    min-height: 96px;
+  }
+  .barSection { display: flex; align-items: center; gap: 8px; flex: 1; }
+  .barLabel {
+    font-size: 12px; font-weight: 900; color: #bfe3b0; letter-spacing: 1px;
+    text-transform: uppercase; max-width: 86px; line-height: 1.3; text-align: center;
+  }
+  .tileBtn, .towerBtn {
+    border: 2px solid rgba(190, 227, 176, 0.45); border-radius: 14px;
+    background: linear-gradient(180deg, #2f4a3a, #22382c); color: #f4ead8;
+    font-family: inherit; cursor: pointer; padding: 6px 8px; min-width: 74px;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    box-shadow: 0 3px 0 rgba(0,0,0,0.4);
+  }
+  .tileBtn.sel, .towerBtn.sel { border-color: #ffd166; background: linear-gradient(180deg, #4a6a3a, #334d2a); box-shadow: 0 0 0 2px #ffd166, 0 3px 0 rgba(0,0,0,0.4); }
+  .tileBtn:disabled, .towerBtn:disabled { filter: grayscale(0.8) brightness(0.6); cursor: default; }
+  .tileBtn:active:not(:disabled), .towerBtn:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 1px 0 rgba(0,0,0,0.4); }
+  .tileBtn .tname, .towerBtn .tname { font-size: 13px; font-weight: 900; line-height: 1.1; text-align: center; }
+  .tileBtn .tsub, .towerBtn .tsub { font-size: 11px; color: #c9d3c0; line-height: 1.15; text-align: center; }
+  .tileBtn .tcost, .towerBtn .tcost { font-size: 12px; font-weight: 900; color: #ffd166; }
+  .tileBtn svg, .towerBtn svg { width: 40px; height: 30px; }
+  .btn {
+    border: none; border-radius: 14px; padding: 10px 16px; font-family: inherit;
+    font-size: 16px; font-weight: 900; cursor: pointer; color: #231303; white-space: nowrap;
+    background: linear-gradient(180deg, #ffd94d 0%, #e8a33d 100%);
+    box-shadow: 0 4px 0 #a86f14, 0 6px 14px rgba(0,0,0,0.45);
+    text-shadow: 0 1px 0 rgba(255,255,255,0.4);
+  }
+  .btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #a86f14; }
+  .btn:disabled { filter: grayscale(0.8) brightness(0.65); cursor: default; transform: none; }
+  .btn.blue { background: linear-gradient(180deg, #8fd0f0 0%, #4a9ecf 100%); color: #06202e; box-shadow: 0 4px 0 #2a6a92, 0 6px 14px rgba(0,0,0,0.45); text-shadow: 0 1px 0 rgba(255,255,255,0.45); }
+  .btn.blue:active { box-shadow: 0 1px 0 #2a6a92; }
+  .btn.green { background: linear-gradient(180deg, #8fe3a8 0%, #3fae62 100%); color: #062b12; box-shadow: 0 4px 0 #1f7a3c, 0 6px 14px rgba(0,0,0,0.45); }
+  .btn.green:active { box-shadow: 0 1px 0 #1f7a3c; }
+  .btn.ghost { background: rgba(16, 32, 24, 0.92); color: #dfe6d8; box-shadow: 0 4px 0 rgba(8,14,10,0.9); border: 1px solid rgba(122,178,122,0.45); text-shadow: none; }
+  .btn.small { padding: 8px 12px; font-size: 14px; }
+  .btn.shake { animation: shake 0.3s; }
+  @keyframes shake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
+
+  /* ---- overlays ---- */
+  .overlay {
+    position: absolute; inset: 0; z-index: 10; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 13px; padding: 20px;
+    background: rgba(8, 16, 12, 0.74); backdrop-filter: blur(2px); text-align: center;
+    overflow-y: auto;
+  }
+  .overlay h1 {
+    font-size: 54px; line-height: 0.95; font-weight: 900; letter-spacing: 1px;
+    color: #ffd94d;
+    text-shadow: 0 3px 0 #a86f14, 0 6px 0 rgba(0,0,0,0.35), 0 10px 24px rgba(0,0,0,0.6);
+  }
+  .overlay h1 .line2 {
+    display: block; font-size: 36px; color: #f4ead8;
+    text-shadow: 0 3px 0 #2a4a34, 0 6px 0 rgba(0,0,0,0.35), 0 10px 24px rgba(0,0,0,0.6);
+  }
+  .overlay h2 { font-size: 32px; font-weight: 900; color: #fff; text-shadow: 0 3px 0 rgba(0,0,0,0.4); }
+  .overlay p { font-size: 16px; line-height: 1.5; color: #d5e2cd; max-width: 540px; }
+  .overlay .tagline { font-size: 17px; color: #ffe9a8; font-weight: 700; }
+  .note { font-size: 13px; color: #9db39a; margin-top: 10px; line-height: 1.5; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  .statBox {
+    background: rgba(16, 32, 24, 0.88); border: 1px solid rgba(122,178,122,0.4);
+    border-radius: 14px; padding: 10px 16px; font-size: 15px; font-weight: 800;
+  }
+  .statBox b { color: #ffd166; }
+  #starsRow { font-size: 44px; letter-spacing: 6px; color: #ffd94d; text-shadow: 0 3px 8px rgba(0,0,0,0.6); min-height: 52px; }
+  #starsRow .dim { color: rgba(255,255,255,0.22); }
+  #starsRow .starPop { display: inline-block; animation: starPop .45s cubic-bezier(.34,1.56,.64,1) backwards; }
+  @keyframes starPop { from { transform: scale(0) rotate(-30deg); opacity: 0; } to { transform: scale(1) rotate(0deg); opacity: 1; } }
+  .howtoCard {
+    background: rgba(16, 32, 24, 0.88); border: 1px solid rgba(122,178,122,0.4);
+    border-radius: 16px; padding: 14px 18px; text-align: left; max-width: 540px;
+    font-size: 15px; line-height: 1.65; color: #e6f0df;
+  }
+  .howtoCard b { color: #ffd166; }
+  .cardRow { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+  .draftCard {
+    width: 168px; border: 2px solid rgba(190,227,176,0.5); border-radius: 16px;
+    background: linear-gradient(180deg, #2f4a3a, #1d2f24); color: #f4ead8;
+    font-family: inherit; cursor: pointer; padding: 14px 12px; text-align: center;
+    box-shadow: 0 4px 0 rgba(0,0,0,0.45);
+  }
+  .draftCard:hover { border-color: #ffd166; transform: translateY(-2px); }
+  .draftCard:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(0,0,0,0.45); }
+  .draftCard .cicon { font-size: 30px; line-height: 1; margin-bottom: 6px; }
+  .draftCard .cname { font-size: 16px; font-weight: 900; margin-bottom: 4px; }
+  .draftCard .cdesc { font-size: 13px; color: #c9d3c0; line-height: 1.4; }
+  .themeRow { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .themeBtn {
+    border: 2px solid rgba(190,227,176,0.4); border-radius: 12px; padding: 8px 12px;
+    background: rgba(16,32,24,0.9); color: #f4ead8; font-family: inherit;
+    font-size: 13px; font-weight: 900; cursor: pointer;
+  }
+  .themeBtn.sel { border-color: #ffd166; box-shadow: 0 0 0 2px #ffd166; }
+  .themeBtn:disabled { filter: grayscale(0.8) brightness(0.6); cursor: default; }
+  #toast {
+    position: absolute; left: 50%; top: 54px; transform: translateX(-50%);
+    z-index: 8; background: rgba(10, 20, 15, 0.94); border: 1px solid rgba(122,178,122,0.55);
+    color: #fff; font-weight: 800; font-size: 15px; padding: 9px 16px; border-radius: 999px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5); max-width: 94%;
+    pointer-events: none; text-align: center; line-height: 1.35;
+    opacity: 0; transition: opacity 0.2s;
+  }
+  #toast.show { opacity: 1; }
+  #phaseTip {
+    position: absolute; left: 50%; bottom: 100px; transform: translateX(-50%);
+    z-index: 7; background: linear-gradient(180deg, #ffd94d, #e8a33d); color: #231303;
+    font-weight: 900; font-size: 13px; padding: 7px 14px; border-radius: 999px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5); max-width: 92%;
+    pointer-events: none; text-align: center; line-height: 1.3;
+  }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  @media (max-width: 700px) {
+    #hud { gap: 4px; padding: 6px 7px; }
+    #hud .pill { font-size: 12px; padding: 5px 8px; }
+    .tileBtn, .towerBtn { min-width: 62px; padding: 5px 6px; }
+    .tileBtn .tname, .towerBtn .tname { font-size: 12px; }
+    .btn.small { padding: 8px 10px; font-size: 13px; }
+    .barLabel { display: none; }
+  }
+  @media (max-width: 420px) {
+    .btn.small { padding: 6px 7px; font-size: 12px; }
+    #hud { gap: 3px; padding: 5px 6px; }
+    #hud .pill { font-size: 11px; padding: 4px 7px; }
+    .iconBtn { width: 31px; height: 31px; font-size: 13px; }
+    .draftCard { width: 140px; }
+  }
+  @media (max-height: 500px) {
+    #phaseTip { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .btn.shake { animation: none; }
+    #starsRow .starPop { animation: none; }
+    #hud .pill.hearts.low { animation: none; }
+  }
+</style>
+</head>
+<body>
+<div id="game">
+  <!-- Shared artwork defs: gold coin + heart, referenced by every pic.
+       No external images. -->
+  <svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden"><defs>
+    <radialGradient id="coinGold" cx="35%" cy="30%" r="75%">
+      <stop offset="0%" stop-color="#fff3b0"/>
+      <stop offset="45%" stop-color="#ffd94d"/>
+      <stop offset="80%" stop-color="#f5a623"/>
+      <stop offset="100%" stop-color="#d18a12"/>
+    </radialGradient>
+    <linearGradient id="heartRed" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ff8a7a"/>
+      <stop offset="100%" stop-color="#e4572e"/>
+    </linearGradient>
+  </defs></svg>
+  <canvas id="boardCanvas" width="960" height="600"></canvas>
+
+  <div id="hud" class="hidden">
+    <button class="iconBtn" id="btnPause" type="button" title="Pause (Esc)">II</button>
+    <span class="pill wave" id="hudWave">Wave 1/12</span>
+    <span class="pill hearts" id="hudHearts"><svg class="heartSvg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21C7 16.5 3 13.3 3 9.3 3 6.4 5.2 4.5 7.6 4.5c1.7 0 3.3.9 4.4 2.4 1.1-1.5 2.7-2.4 4.4-2.4 2.4 0 4.6 1.9 4.6 4.8 0 4-4 7.2-9 11.7Z" fill="url(#heartRed)" stroke="#a83a20" stroke-width="1"/></svg> <span id="hudHeartsNum">10</span></span>
+    <span class="pill gold" id="hudGold"><svg class="coinSvg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10.6" fill="url(#coinGold)" stroke="#b97a0e" stroke-width="1.5"/><circle cx="12" cy="12" r="7.4" fill="none" stroke="#c98f1b" stroke-width="1.1" opacity="0.9"/><path d="M12 7.1L13.2 10.4 16.7 10.5 13.9 12.6 14.9 16 12 14 9.1 16 10.1 12.6 7.3 10.5 10.8 10.4Z" fill="#fff3b0" stroke="#d99a1f" stroke-width="0.6" stroke-linejoin="round"/><path d="M4.6 9.4A8 8 0 0 1 9.4 4.6" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" opacity="0.9"/></svg> <span id="hudGoldNum">0</span></span>
+    <span class="pill score" id="hudScore">Score 0</span>
+    <span class="pill foes" id="hudFoes">Foes 0</span>
+    <div id="waveBar" title="Wave progress"><div id="waveBarFill"></div></div>
+    <button class="iconBtn" id="btnSpeed" type="button" title="Speed x2 (Space)">1x</button>
+    <button class="hudBtn" id="btnSound" type="button" title="Sound (M)">Sound: On</button>
+  </div>
+
+  <div id="actionBar" class="hidden">
+    <div class="barSection" id="draftBar">
+      <span class="barLabel">Draft the road</span>
+      <button class="tileBtn" id="hand0" type="button"></button>
+      <button class="tileBtn" id="hand1" type="button"></button>
+      <button class="tileBtn" id="hand2" type="button"></button>
+      <button class="btn small green" id="btnDoneDraft" type="button">Done</button>
+    </div>
+    <div class="barSection hidden" id="buildBar">
+      <span class="barLabel">Build towers</span>
+      <button class="towerBtn" id="tower0" type="button"></button>
+      <button class="towerBtn" id="tower1" type="button"></button>
+      <button class="towerBtn" id="tower2" type="button"></button>
+      <button class="towerBtn" id="tower3" type="button"></button>
+      <button class="btn small green" id="btnStartWave" type="button">Start Wave</button>
+    </div>
+    <div class="barSection hidden" id="waveBar2">
+      <span class="barLabel">Wave running</span>
+      <span class="barLabel" id="waveStatus" style="max-width:none;flex:1;color:#f4ead8;text-transform:none;letter-spacing:0;font-size:14px;">Hold the road!</span>
+      <button class="btn small ghost" id="btnSpeed2" type="button">Speed: 1x</button>
+    </div>
+    <div class="barSection hidden" id="towerBar">
+      <span class="barLabel" id="towerName">Tower</span>
+      <button class="btn small blue" id="btnUpgrade" type="button">Upgrade</button>
+      <button class="btn small ghost" id="btnSell" type="button">Sell</button>
+      <button class="btn small ghost" id="btnCloseTower" type="button">Close</button>
+    </div>
+  </div>
+
+  <div id="toast" role="status"></div>
+  <div id="phaseTip" class="hidden"></div>
+  <div id="announcer" class="sr" aria-live="polite"></div>
+
+  <!-- MENU -->
+  <div id="menuOverlay" class="overlay">
+    <h1>PEBBLE<span class="line2">HOLD</span></h1>
+    <p class="tagline">Draft the road, hold the valley!</p>
+    <div class="row">
+      <span class="statBox">Best wave: <b id="menuBest">0</b></span>
+      <span class="statBox"><svg class="coinSvg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10.6" fill="url(#coinGold)" stroke="#b97a0e" stroke-width="1.5"/><circle cx="12" cy="12" r="7.4" fill="none" stroke="#c98f1b" stroke-width="1.1" opacity="0.9"/><path d="M12 7.1L13.2 10.4 16.7 10.5 13.9 12.6 14.9 16 12 14 9.1 16 10.1 12.6 7.3 10.5 10.8 10.4Z" fill="#fff3b0" stroke="#d99a1f" stroke-width="0.6" stroke-linejoin="round"/><path d="M4.6 9.4A8 8 0 0 1 9.4 4.6" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" opacity="0.9"/></svg> <b id="menuCoins">0</b></span>
+      <span class="statBox">Runs won: <b id="menuWins">0</b></span>
+    </div>
+    <div class="row">
+      <button class="btn green" id="btnPlay" type="button">PLAY</button>
+      <button class="btn blue" id="btnHowTo" type="button">How to Play</button>
+      <button class="btn ghost" id="btnMenuSound" type="button">Sound: On</button>
+    </div>
+    <div>
+      <p class="note" style="margin:0 0 6px;">Valley theme (unlocks by best wave)</p>
+      <div class="themeRow" id="themeRow"></div>
+    </div>
+    <p class="note">A tower-defence roguelite: YOU lay the road the enemies must march.
+      Longer, windier road = more time under your towers' fire.</p>
+  </div>
+
+  <!-- HOW TO PLAY -->
+  <div id="howtoOverlay" class="overlay hidden">
+    <h2>How to Play</h2>
+    <div class="howtoCard">
+      <b>1. Draft the road.</b> Before each wave you get 3 tiles. Tap a tile, then tap
+      a glowing cell next to the road end to lay it. <b>Straight</b> keeps going the
+      same way, <b>Corner</b> turns, <b>Bridge</b> crosses a rock. The road must
+      always leave a way open to the Keep — a blocked placement is refused.<br>
+      <b>2. Build towers.</b> Tap a tower card, then tap a grass cell beside the road.
+      Tap a tower again to upgrade it (twice) or sell it back for 65%.<br>
+      <b>3. Hold the wave.</b> Press START WAVE. Enemies march your road; towers fire
+      on their own. Leaks cost Keep hearts — <b>0 hearts ends the run</b>.<br>
+      <b>4. Draft a card.</b> After each cleared wave pick 1 of 3 cards: a new tower,
+      a free upgrade, or a relic. Win wave 12 to finish the run, then Endless.<br>
+      <b>Enemies:</b> Runner (fast), Grunt, Shielded (armour — Sling damage halved),
+      Swarm (many tiny), Flyer (wave 6+, only Sling + Spark can hit, ignores Frost),
+      Brute boss every 5th wave (leak costs 3 hearts).<br>
+      <b>Keys:</b> 1/2/3 pick hand tiles, Q/W/E/R pick towers, Space starts the wave
+      or toggles speed, Esc pauses, M mutes.
+    </div>
+    <div class="row"><button class="btn green" id="btnHowToGotIt" type="button">Got it!</button></div>
+  </div>
+
+  <!-- WAVE INTRO -->
+  <div id="waveIntroOverlay" class="overlay hidden">
+    <h2 id="waveIntroTitle">Wave 1</h2>
+    <p id="waveIntroText">The valley stirs...</p>
+    <div class="row"><span class="statBox" id="waveIntroFoes">Foes: 8</span><span class="statBox" id="waveIntroUnlock"></span></div>
+    <div class="row"><button class="btn green" id="btnDraftStart" type="button">Draft the Road</button></div>
+  </div>
+
+  <!-- WAVE CLEAR / DRAFT A CARD -->
+  <div id="waveClearOverlay" class="overlay hidden">
+    <h2 id="waveClearTitle">Wave Cleared!</h2>
+    <p id="waveClearText">Pick 1 of 3 draft cards.</p>
+    <div class="cardRow" id="draftCards"></div>
+    <div class="row"><span class="statBox">Coins earned: <b id="waveClearCoins">0</b></span></div>
+  </div>
+
+  <!-- RUN COMPLETE -->
+  <div id="runCompleteOverlay" class="overlay hidden">
+    <h2>Valley Held!</h2>
+    <div id="starsRow"></div>
+    <p>You held the Keep through all 12 waves. The valley is yours, Pebbleholder.</p>
+    <div class="row">
+      <span class="statBox">Score: <b id="runScore">0</b></span>
+      <span class="statBox"><svg class="coinSvg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10.6" fill="url(#coinGold)" stroke="#b97a0e" stroke-width="1.5"/><circle cx="12" cy="12" r="7.4" fill="none" stroke="#c98f1b" stroke-width="1.1" opacity="0.9"/><path d="M12 7.1L13.2 10.4 16.7 10.5 13.9 12.6 14.9 16 12 14 9.1 16 10.1 12.6 7.3 10.5 10.8 10.4Z" fill="#fff3b0" stroke="#d99a1f" stroke-width="0.6" stroke-linejoin="round"/><path d="M4.6 9.4A8 8 0 0 1 9.4 4.6" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" opacity="0.9"/></svg> <b id="runCoins">0</b></span>
+      <span class="statBox">Best wave: <b id="runBest">12</b></span>
+    </div>
+    <div class="row">
+      <button class="btn green" id="btnReplay" type="button">Play Again</button>
+      <button class="btn ghost" id="btnRunMenu" type="button">Menu</button>
+    </div>
+  </div>
+
+  <!-- RUN OVER -->
+  <div id="runOverOverlay" class="overlay hidden">
+    <h2>The Keep Has Fallen</h2>
+    <p id="runOverText">The valley overran on wave 3.</p>
+    <div class="row">
+      <span class="statBox">Score: <b id="overScore">0</b></span>
+      <span class="statBox">Best wave: <b id="overBest">0</b></span>
+    </div>
+    <div class="row">
+      <button class="btn green" id="btnRetry" type="button">Retry Run</button>
+      <button class="btn ghost" id="btnOverMenu" type="button">Menu</button>
+    </div>
+  </div>
+
+  <!-- PAUSE -->
+  <div id="pauseOverlay" class="overlay hidden">
+    <h2>Paused</h2>
+    <p id="pauseInfo">Wave 1 — Score 0</p>
+    <div class="row">
+      <button class="btn green" id="btnResume" type="button">Resume</button>
+      <button class="btn ghost" id="btnQuitRun" type="button">Quit to Menu</button>
+    </div>
+  </div>
+</div>
+<script>
+"use strict";
+// __PURE_LOGIC_START__
+/* ================= PURE LOGIC (node-testable, no DOM) ================= */
+const SAVE_KEY = "pebblehold_save_v1";
+const GAME_TITLE = "Pebblehold";
+const COLS = 10, ROWS = 7;
+const ENTRY = { x: 0, y: 3 };
+const KEEP = { x: 9, y: 3 };
+const TOTAL_WAVES = 12;
+const MAX_HEARTS = 10;
+const START_GOLD = 120;
+const TOTAL_RUNS = 0; // runs are endless after wave 12
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+function cellKey(x, y) { return x + "," + y; }
+function inBounds(x, y) { return x >= 0 && x < COLS && y >= 0 && y < ROWS; }
+const DIRS = [{ x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 0, y: -1 }]; // E S W N
+function dirOf(ax, ay, bx, by) { // direction from a to b (must be adjacent)
+  for (let d = 0; d < 4; d++) if (ax + DIRS[d].x === bx && ay + DIRS[d].y === by) return d;
+  return -1;
+}
+
+const THEMES = [
+  { name: "Mossy Valley", need: 0, grass: "#3d6b41", grass2: "#35603a", road: "#b98a56", roadEdge: "#8a6a42", rock: "#6f757e", water: null },
+  { name: "Autumn Hollow", need: 4, grass: "#7a5a2e", grass2: "#6d5027", road: "#c9a35c", roadEdge: "#96743c", rock: "#7a6a58", water: null },
+  { name: "Frost Ridge", need: 8, grass: "#4a6a7a", grass2: "#416070", road: "#c8d8de", roadEdge: "#8fa8b2", rock: "#8a97a3", water: null },
+  { name: "Ember Quarry", need: 99, grass: "#5e3a2e", grass2: "#533226", road: "#d8a05c", roadEdge: "#a8763e", rock: "#5a4a48", water: null },
+];
+function themeForBest(best, won) {
+  if (won) return THEMES[3];
+  if (best >= 8) return THEMES[2];
+  if (best >= 4) return THEMES[1];
+  return THEMES[0];
+}
+function themeUnlocked(idx, best, won) {
+  if (idx === 0) return true;
+  if (idx === 3) return !!won;
+  return best >= THEMES[idx].need;
+}
+
+const TOWERS = {
+  sling: { id: "sling", name: "Sling Post", key: "Q", cost: 40, range: 2.5, rate: 2.0, dmg: [12, 20, 32], upCost: [30, 50], splash: 0, chain: 0, slow: 0, slowDur: 0, canHitFlyer: true, unlockWave: 1, desc: "Fast pebbles" },
+  boulder: { id: "boulder", name: "Boulder Lobber", key: "W", cost: 90, range: 3.0, rate: 0.7, dmg: [30, 48, 75], upCost: [68, 113], splash: 1.0, chain: 0, slow: 0, slowDur: 0, canHitFlyer: false, unlockWave: 3, desc: "Splash boulder" },
+  frost: { id: "frost", name: "Frost Bloom", key: "E", cost: 70, range: 2.0, rate: 1.0, dmg: [3, 6, 10], upCost: [53, 88], splash: 0, chain: 0, slow: 0.40, slowDur: 1.5, canHitFlyer: false, unlockWave: 6, desc: "Slows 40%" },
+  spark: { id: "spark", name: "Spark Obelisk", key: "R", cost: 140, range: 3.0, rate: 1.2, dmg: [18, 28, 42], upCost: [105, 175], splash: 0, chain: 3, slow: 0, slowDur: 0, canHitFlyer: true, unlockWave: 4, desc: "Chain lightning x3" },
+};
+const TOWER_ORDER = ["sling", "boulder", "frost", "spark"];
+function towerUnlocked(id, wave, earlyUnlocks) {
+  if (earlyUnlocks && earlyUnlocks.indexOf(id) !== -1) return true;
+  return wave >= TOWERS[id].unlockWave;
+}
+function towerSellValue(t) {
+  let spent = TOWERS[t.type].cost;
+  for (let l = 1; l < t.level; l++) spent += TOWERS[t.type].upCost[l - 1];
+  return Math.floor(spent * 0.65);
+}
+
+const ENEMIES = {
+  grunt: { name: "Grunt", hp: 60, speed: 1.0, leak: 1, flyer: false, armoured: false, gold: 7, score: 10 },
+  runner: { name: "Runner", hp: 30, speed: 1.6, leak: 1, flyer: false, armoured: false, gold: 7, score: 10 },
+  shielded: { name: "Shielded", hp: 95, speed: 0.9, leak: 2, flyer: false, armoured: true, gold: 9, score: 10 },
+  swarm: { name: "Swarm", hp: 15, speed: 1.3, leak: 1, flyer: false, armoured: false, gold: 3, score: 10 },
+  flyer: { name: "Flyer", hp: 50, speed: 1.45, leak: 2, flyer: true, armoured: false, gold: 9, score: 10 },
+  brute: { name: "Brute", hp: 620, speed: 0.6, leak: 3, flyer: false, armoured: false, gold: 40, score: 500 },
+};
+function enemyHp(type, wave) {
+  const base = ENEMIES[type].hp;
+  if (wave <= TOTAL_WAVES) return Math.round(base * (1 + 0.10 * (wave - 1)));
+  return Math.round(base * (1 + 0.10 * (TOTAL_WAVES - 1)) * Math.pow(1.15, wave - TOTAL_WAVES));
+}
+function waveMultiplier(wave) { return Math.min(4, 1 + Math.floor(wave / 4)); }
+function killGold(type, wave, goldMul) {
+  return Math.max(1, Math.round((ENEMIES[type].gold + Math.floor(wave / 2)) * (goldMul || 1)));
+}
+function waveClearGold(wave) { return 30 + wave * 5; }
+function waveClearCoins(wave) { return 10 + wave * 2; }
+function coinsForKills(kills) { return Math.floor(kills / 5); }
+function starsForRun(heartsLeft) {
+  if (heartsLeft >= 8) return 3;
+  if (heartsLeft >= 4) return 2;
+  return 1;
+}
+
+/* ---- save ---- */
+function defaultSave() {
+  return { v: 1, coins: 0, best: 0, wins: 0, theme: 0, muted: false, seenHowto: false, runs: 0 };
+}
+function loadSave(store) {
+  const d = defaultSave();
+  try {
+    store = store || (typeof localStorage !== "undefined" ? localStorage : null);
+    if (!store) return d;
+    const raw = store.getItem(SAVE_KEY);
+    if (!raw) return d;
+    const s = JSON.parse(raw);
+    if (!s || typeof s !== "object") return d;
+    d.coins = clamp(Math.floor(s.coins) || 0, 0, 999999);
+    d.best = clamp(Math.floor(s.best) || 0, 0, 999);
+    d.wins = clamp(Math.floor(s.wins) || 0, 0, 99999);
+    d.runs = clamp(Math.floor(s.runs) || 0, 0, 99999);
+    d.theme = clamp(Math.floor(s.theme) || 0, 0, 3);
+    d.muted = !!s.muted;
+    d.seenHowto = !!s.seenHowto;
+    d.v = 1;
+    return d;
+  } catch (e) { return d; }
+}
+function saveSave(s, store) {
+  try {
+    store = store || (typeof localStorage !== "undefined" ? localStorage : null);
+    if (!store) return false;
+    store.setItem(SAVE_KEY, JSON.stringify(s));
+    return true;
+  } catch (e) { return false; }
+}
+
+/* ---- board ---- */
+function genBoard(runSeed) {
+  const rng = mulberry32(runSeed * 7919 + 13);
+  const rocks = {};
+  let placed = 0, guard = 0;
+  while (placed < 6 && guard++ < 200) {
+    const x = 1 + Math.floor(rng() * 8); // cols 1..8
+    const y = Math.floor(rng() * ROWS);
+    if (y === 3) continue; // middle row stays clear: a straight road is always possible
+    const k = cellKey(x, y);
+    if (rocks[k]) continue;
+    rocks[k] = true; placed++;
+  }
+  return { rocks };
+}
+function roadEnd(road) { return road[road.length - 1]; }
+function roadDir(road) {
+  if (road.length < 2) return 0; // east from the entry
+  const a = road[road.length - 2], b = road[road.length - 1];
+  return dirOf(a.x, a.y, b.x, b.y);
+}
+function roadSet(road) {
+  const s = {};
+  road.forEach(function (c) { s[cellKey(c.x, c.y)] = true; });
+  return s;
+}
+/* BFS: is there a route Entry -> Keep through road cells + empty cells?
+   Blocked: rocks, towers. Empty grass counts as passable (a future road
+   could go there). The road cells themselves are passable. */
+function routePossible(board, road, towers) {
+  const rset = roadSet(road);
+  const tset = {};
+  (towers || []).forEach(function (t) { tset[cellKey(t.x, t.y)] = true; });
+  const seen = {};
+  const q = [{ x: ENTRY.x, y: ENTRY.y }];
+  seen[cellKey(ENTRY.x, ENTRY.y)] = true;
+  while (q.length) {
+    const c = q.shift();
+    if (c.x === KEEP.x && c.y === KEEP.y) return true;
+    for (let d = 0; d < 4; d++) {
+      const nx = c.x + DIRS[d].x, ny = c.y + DIRS[d].y;
+      if (!inBounds(nx, ny)) continue;
+      const k = cellKey(nx, ny);
+      if (seen[k]) continue;
+      if (board.rocks[k] && !rset[k]) continue;
+      if (tset[k]) continue;
+      seen[k] = true;
+      q.push({ x: nx, y: ny });
+    }
+  }
+  return false;
+}
+/* Tile placement: tile kinds straight / cornerL / cornerR / bridge.
+   The target cell is forced by the road end + current direction + kind:
+   straight -> one step forward; cornerL/R -> one step turned;
+   bridge -> one step forward onto a rock cell. */
+function tileTarget(road, kind) {
+  const end = roadEnd(road);
+  const d = roadDir(road);
+  let nd = d;
+  if (kind === "cornerL") nd = (d + 3) % 4;
+  else if (kind === "cornerR") nd = (d + 1) % 4;
+  return { x: end.x + DIRS[nd].x, y: end.y + DIRS[nd].y, dir: nd };
+}
+function tileTargetForCell(road, kind, x, y) {
+  const t = tileTarget(road, kind);
+  return t.x === x && t.y === y;
+}
+function canPlaceTile(board, road, towers, kind, x, y) {
+  if (!inBounds(x, y)) return { ok: false, why: "edge" };
+  if (x === KEEP.x && y === KEEP.y) return { ok: false, why: "keep" };
+  if (x === ENTRY.x && y === ENTRY.y) return { ok: false, why: "entry" };
+  const rset = roadSet(road);
+  if (rset[cellKey(x, y)]) return { ok: false, why: "road" };
+  const isRock = !!board.rocks[cellKey(x, y)];
+  if (kind === "bridge") {
+    if (!isRock) return { ok: false, why: "bridge-needs-rock" };
+  } else if (isRock) {
+    return { ok: false, why: "rock" };
+  }
+  if (!tileTargetForCell(road, kind, x, y)) return { ok: false, why: "shape" };
+  const newRoad = road.concat([{ x: x, y: y }]);
+  if (!routePossible(board, newRoad, towers)) return { ok: false, why: "no-route" };
+  return { ok: true, newRoad: newRoad };
+}
+function roadTouchesKeep(road) {
+  const end = roadEnd(road);
+  return Math.abs(end.x - KEEP.x) + Math.abs(end.y - KEEP.y) === 1;
+}
+/* Deal a hand of 3 tiles for a draft. Bridge appears only when a rock
+   sits next to the road end (otherwise it could never be placed). */
+function dealHand(seed, road, board, bonus) {
+  const rng = mulberry32(seed);
+  const end = roadEnd(road);
+  const d = roadDir(road);
+  const fwd = { x: end.x + DIRS[d].x, y: end.y + DIRS[d].y };
+  const rockAhead = inBounds(fwd.x, fwd.y) && !!board.rocks[cellKey(fwd.x, fwd.y)];
+  const n = bonus ? 4 : 3;
+  const hand = [];
+  for (let i = 0; i < n; i++) {
+    const r = rng();
+    let kind;
+    if (rockAhead && r < 0.30) kind = "bridge";
+    else if (r < 0.55) kind = "straight";
+    else if (r < 0.78) kind = "cornerL";
+    else kind = "cornerR";
+    hand.push({ kind: kind, used: false });
+  }
+  return hand;
+}
+function tileName(kind) {
+  return kind === "straight" ? "Straight" : kind === "cornerL" ? "Corner L" : kind === "cornerR" ? "Corner R" : "Bridge";
+}
+
+/* ---- waves ---- */
+function waveComp(wave, runSeed) {
+  const rng = mulberry32(runSeed * 100 + wave * 17 + 5);
+  const list = []; // {type, count, gap}
+  function add(type, count, gap) { list.push({ type: type, count: count, gap: gap }); }
+  const interval = Math.max(0.7, 1.7 - wave * 0.08);
+  if (wave === 1) { add("grunt", 8, 1.6); }
+  else if (wave === 2) { add("grunt", 8, 1.4); add("runner", 3, 1.4); }
+  else if (wave === 3) { add("grunt", 8, 1.3); add("shielded", 4, 1.3); }
+  else if (wave === 4) { add("grunt", 6, 1.2); add("swarm", 12, 0.5); }
+  else if (wave === 5) { add("brute", 1, 0); add("grunt", 8, 1.2); }
+  else if (wave === 6) { add("grunt", 8, 1.2); add("flyer", 4, 1.3); add("runner", 4, 1.1); }
+  else if (wave === 7) { add("shielded", 6, 1.1); add("swarm", 12, 0.5); add("runner", 4, 1.0); }
+  else if (wave === 8) { add("grunt", 10, 1.0); add("flyer", 6, 1.2); add("shielded", 4, 1.0); }
+  else if (wave === 9) { add("swarm", 16, 0.45); add("runner", 8, 0.9); add("grunt", 6, 1.0); }
+  else if (wave === 10) { add("brute", 2, 2.5); add("grunt", 10, 1.0); add("flyer", 4, 1.1); }
+  else if (wave === 11) { add("shielded", 8, 1.0); add("swarm", 16, 0.45); add("flyer", 6, 1.1); }
+  else if (wave === 12) { add("brute", 1, 0); add("flyer", 8, 1.0); add("grunt", 10, 0.9); add("shielded", 6, 1.0); }
+  else {
+    const n = 14 + wave;
+    add("grunt", Math.floor(n * 0.4), 0.9);
+    add("runner", Math.floor(n * 0.25), 0.85);
+    add("shielded", Math.floor(n * 0.15), 0.9);
+    add("flyer", Math.floor(n * 0.12), 0.95);
+    add("swarm", Math.floor(n * 0.3), 0.45);
+    if (wave % 5 === 0) add("brute", Math.floor(wave / 5), 2.5);
+  }
+  // Interleave the groups so the wave feels mixed, keeping each group's gap.
+  const queue = [];
+  let t = 0.5;
+  const pools = list.map(function (g) { return { type: g.type, left: g.count, gap: g.gap, next: 0 }; });
+  let guard = 0;
+  while (pools.some(function (p) { return p.left > 0; }) && guard++ < 500) {
+    const avail = pools.filter(function (p) { return p.left > 0; });
+    const pick = avail[Math.floor(rng() * avail.length)];
+    queue.push({ type: pick.type, at: t });
+    pick.left--;
+    t += pick.gap;
+  }
+  let total = 0;
+  list.forEach(function (g) { total += g.count; });
+  return { queue: queue, total: total, interval: interval };
+}
+function waveUnlockText(wave) {
+  if (wave === 3) return "Boulder Lobber unlocked!";
+  if (wave === 4) return "Spark Obelisk unlocked!";
+  if (wave === 6) return "Frost Bloom unlocked! Flyers appear!";
+  if (wave === 5 || wave === 10 || wave === 12) return "BOSS wave — a Brute marches!";
+  return "";
+}
+
+/* ---- draft cards (after a cleared wave) ---- */
+const CARD_TYPES = [
+  { id: "unlock-spark", name: "Spark Obelisk", desc: "Unlock the Spark Obelisk now (chain lightning).", icon: "spark" },
+  { id: "unlock-boulder", name: "Boulder Lobber", desc: "Unlock the Boulder Lobber now (splash damage).", icon: "boulder" },
+  { id: "unlock-frost", name: "Frost Bloom", desc: "Unlock the Frost Bloom now (slows enemies).", icon: "frost" },
+  { id: "upgrade", name: "Master Smith", desc: "Free upgrade: a random tower gains +1 level.", icon: "upgrade" },
+  { id: "relic-range", name: "Long Barrels", desc: "Relic: all towers +10% range.", icon: "range" },
+  { id: "relic-gold", name: "Gold Vein", desc: "Relic: +15% gold from every kill.", icon: "gold" },
+  { id: "relic-aura", name: "Frost Aura", desc: "Relic: all enemies start 10% slower.", icon: "aura" },
+  { id: "relic-heart", name: "Reinforce", desc: "Relic: +2 Keep hearts (max 10).", icon: "heart" },
+  { id: "gold-cache", name: "Gold Cache", desc: "+60 gold right now.", icon: "gold" },
+  { id: "bonus-tile", name: "Extra Tile", desc: "Next draft hand has 4 tiles instead of 3.", icon: "tile" },
+];
+function dealCards(seed, wave, ownedTowers, earlyUnlocks) {
+  const rng = mulberry32(seed * 31 + wave * 7 + 3);
+  const pool = CARD_TYPES.filter(function (c) {
+    if (c.id === "unlock-spark" && (wave >= 4 || (earlyUnlocks || []).indexOf("spark") !== -1)) return false;
+    if (c.id === "unlock-boulder" && (wave >= 3 || (earlyUnlocks || []).indexOf("boulder") !== -1)) return false;
+    if (c.id === "unlock-frost" && (wave >= 6 || (earlyUnlocks || []).indexOf("frost") !== -1)) return false;
+    if (c.id === "upgrade" && (!ownedTowers || ownedTowers.length === 0)) return false;
+    return true;
+  });
+  const cards = [];
+  const idxs = [];
+  while (cards.length < 3 && idxs.length < pool.length) {
+    const i = Math.floor(rng() * pool.length);
+    if (idxs.indexOf(i) !== -1) continue;
+    idxs.push(i);
+    cards.push(pool[i]);
+  }
+  return cards;
+}
+
+/* ---- wave combat simulation (pure logic, shared by runtime + tests) ---- */
+/* ws: { road, towers, relics, wave, queue, active, gold, kills, leaks,
+   hearts, time, spawnIdx, over, cleared, score, coinsEarned } */
+function waypoints(road) {
+  const pts = road.map(function (c) { return { x: c.x, y: c.y }; });
+  pts.push({ x: KEEP.x, y: KEEP.y });
+  return pts;
+}
+function newWaveState(road, towers, relics, wave, runSeed, hearts) {
+  const comp = waveComp(wave, runSeed);
+  return {
+    road: road, towers: towers, relics: relics || { rangeMul: 1, goldMul: 1, slowAura: 0 },
+    wave: wave, queue: comp.queue, total: comp.total, active: [],
+    gold: 0, kills: 0, leaks: 0, hearts: hearts, time: 0, spawnIdx: 0,
+    over: false, cleared: false, score: 0, coinsEarned: 0, spawned: 0,
+  };
+}
+function enemyPos(pts, dist) {
+  // dist in cells along the path; returns {x, y} in cell coords (float)
+  let d = dist;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const seg = Math.abs(b.x - a.x) + Math.abs(b.y - a.y);
+    if (d <= seg) {
+      const t = seg === 0 ? 0 : d / seg;
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, seg: i };
+    }
+    d -= seg;
+  }
+  const last = pts[pts.length - 1];
+  return { x: last.x, y: last.y, seg: pts.length - 1 };
+}
+function waveStep(ws, dt) {
+  if (ws.over || ws.cleared) return ws;
+  ws.time += dt;
+  const pts = waypoints(ws.road);
+  const pathLen = pts.length - 1; // cells from entry to keep
+  // spawn
+  while (ws.spawnIdx < ws.queue.length && ws.queue[ws.spawnIdx].at <= ws.time) {
+    const q = ws.queue[ws.spawnIdx++];
+    ws.active.push({
+      type: q.type, hp: enemyHp(q.type, ws.wave), maxHp: enemyHp(q.type, ws.wave),
+      dist: 0, slowUntil: 0, slowFactor: 1, id: ws.spawned++, hitFlash: 0,
+    });
+  }
+  // towers fire
+  ws.towers.forEach(function (t) {
+    const def = TOWERS[t.type];
+    t.cd = (t.cd || 0) - dt;
+    if (t.cd > 0) return;
+    const range = def.range * (ws.relics.rangeMul || 1);
+    // find target: furthest-along enemy in range that this tower can hit
+    let best = null, bestDist = -1;
+    ws.active.forEach(function (e) {
+      const defE = ENEMIES[e.type];
+      if (defE.flyer && !def.canHitFlyer) return;
+      const p = enemyPos(pts, e.dist);
+      const dx = p.x - t.x, dy = p.y - t.y;
+      if (Math.sqrt(dx * dx + dy * dy) <= range + 0.5) {
+        if (e.dist > bestDist) { bestDist = e.dist; best = e; }
+      }
+    });
+    if (!best) return;
+    t.cd = 1 / def.rate;
+    t.lastTarget = best.id;
+    const dmgBase = def.dmg[t.level - 1];
+    function hitEnemy(e, mult) {
+      let dmg = dmgBase * mult;
+      if (ENEMIES[e.type].armoured && t.type === "sling") dmg *= 0.5;
+      e.hp -= dmg;
+      e.hitFlash = 0.12;
+      if (def.slow > 0 && !ENEMIES[e.type].flyer) {
+        e.slowUntil = ws.time + def.slowDur;
+        e.slowFactor = Math.max(1 - def.slow, 0.5); // never below 50% from frost
+      }
+    }
+    hitEnemy(best, 1);
+    if (def.splash > 0) {
+      const bp = enemyPos(pts, best.dist);
+      ws.active.forEach(function (e) {
+        if (e === best) return;
+        const p = enemyPos(pts, e.dist);
+        if (Math.sqrt((p.x - bp.x) * (p.x - bp.x) + (p.y - bp.y) * (p.y - bp.y)) <= def.splash) hitEnemy(e, 1);
+      });
+    }
+    if (def.chain > 0) {
+      let from = best, done = [best];
+      let dmg = dmgBase * 0.5;
+      for (let c = 1; c < def.chain; c++) {
+        const fp = enemyPos(pts, from.dist);
+        let nxt = null, nd = 1e9;
+        ws.active.forEach(function (e) {
+          if (done.indexOf(e) !== -1) return;
+          if (ENEMIES[e.type].flyer && !def.canHitFlyer) return;
+          const p = enemyPos(pts, e.dist);
+          const dd = Math.sqrt((p.x - fp.x) * (p.x - fp.x) + (p.y - fp.y) * (p.y - fp.y));
+          if (dd <= 1.6 && dd < nd) { nd = dd; nxt = e; }
+        });
+        if (!nxt) break;
+        hitEnemy(nxt, 0.5);
+        done.push(nxt);
+        from = nxt;
+        dmg *= 0.5;
+      }
+    }
+  });
+  // deaths
+  const mult = waveMultiplier(ws.wave);
+  for (let i = ws.active.length - 1; i >= 0; i--) {
+    const e = ws.active[i];
+    if (e.hp <= 0) {
+      ws.active.splice(i, 1);
+      ws.kills++;
+      ws.gold += killGold(e.type, ws.wave, ws.relics.goldMul);
+      ws.score += ENEMIES[e.type].score * mult;
+      ws.coinsEarned += 0; // coins settled at wave end from kills
+      e.dead = true;
+      ws.lastKill = e.type;
+    }
+  }
+  // move + leaks
+  for (let i = ws.active.length - 1; i >= 0; i--) {
+    const e = ws.active[i];
+    const defE = ENEMIES[e.type];
+    let sp = defE.speed;
+    if (ws.time < e.slowUntil) sp *= e.slowFactor;
+    if (ws.relics.slowAura) sp *= (1 - ws.relics.slowAura);
+    e.dist += sp * dt;
+    if (e.dist >= pathLen) {
+      ws.active.splice(i, 1);
+      ws.leaks++;
+      ws.hearts -= defE.leak;
+      ws.lastLeak = e.type;
+      if (ws.hearts <= 0) { ws.hearts = 0; ws.over = true; }
+    }
+  }
+  if (!ws.over && ws.spawnIdx >= ws.queue.length && ws.active.length === 0) {
+    ws.cleared = true;
+    ws.coinsEarned = coinsForKills(ws.kills) + waveClearCoins(ws.wave);
+    ws.gold += waveClearGold(ws.wave);
+  }
+  return ws;
+}
+function simulateWave(road, towers, relics, wave, runSeed, hearts) {
+  const ws = newWaveState(road, towers, relics, wave, runSeed, hearts);
+  let steps = 0;
+  while (!ws.over && !ws.cleared && steps++ < 20000) waveStep(ws, 0.1);
+  return ws;
+}
+// __PURE_LOGIC_END__
+
+/* ================= RUNTIME (DOM + canvas) ================= */
+var CG = {
+  sdkMuted: false,
+  gameplayStart: function () {}, gameplayStop: function () {},
+  happytime: function () {}, setContext: function () {}, reportProgress: function () {},
+};
+function $(id) { return document.getElementById(id); }
+function show(el, on) { if (el) el.classList.toggle("hidden", !on); }
+function toast(msg, ms) {
+  var t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(function () { t.classList.remove("show"); }, ms || 2200);
+}
+function announce(msg) { var a = $("announcer"); if (a) a.textContent = msg; }
+
+var SAVE = loadSave();
+function persistSave() { saveSave(SAVE); }
+var canvas = $("boardCanvas");
+var ctx = canvas.getContext("2d");
+var reducedMotion = false;
+try { reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
+
+function boardGeom() {
+  var cell = 58, bw = COLS * cell, bh = ROWS * cell;
+  return { cell: cell, bw: bw, bh: bh, x0: (960 - bw) / 2, y0: 54 };
+}
+function cellCenter(x, y) {
+  var g = boardGeom();
+  return { x: g.x0 + x * g.cell + g.cell / 2, y: g.y0 + y * g.cell + g.cell / 2 };
+}
+function canvasToCell(clientX, clientY) {
+  var r = canvas.getBoundingClientRect();
+  var x = (clientX - r.left) * (960 / r.width);
+  var y = (clientY - r.top) * (600 / r.height);
+  var g = boardGeom();
+  var cx = Math.floor((x - g.x0) / g.cell), cy = Math.floor((y - g.y0) / g.cell);
+  if (!inBounds(cx, cy)) return null;
+  return { x: cx, y: cy };
+}
+
+/* ---- audio ---- */
+var AudioSys = {
+  ctx: null, enabled: true, adMuted: false,
+  ensure: function () {
+    if (this.ctx) return this.ctx;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      this.ctx = new AC();
+    } catch (e) { this.ctx = null; }
+    return this.ctx;
+  },
+  tone: function (freq, dur, type, vol, slideTo, exact) {
+    if (SAVE.muted || this.adMuted || CG.sdkMuted) return;
+    var ac = this.ensure();
+    if (!ac) return;
+    try {
+      if (ac.state === "suspended") ac.resume();
+      var o = ac.createOscillator(), g = ac.createGain();
+      var f = exact ? freq : freq * (1 + (Math.random() * 0.06 - 0.03)); // +/-3% jitter, except exact melodies
+      o.type = type || "sine";
+      o.frequency.setValueAtTime(Math.max(30, f), ac.currentTime);
+      if (slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(30, slideTo), ac.currentTime + dur);
+      g.gain.setValueAtTime(vol || 0.12, ac.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
+      o.connect(g); g.connect(ac.destination);
+      o.start(); o.stop(ac.currentTime + dur + 0.02);
+    } catch (e) {}
+  },
+  noise: function (dur, vol) {
+    if (SAVE.muted || this.adMuted || CG.sdkMuted) return;
+    var ac = this.ensure();
+    if (!ac) return;
+    try {
+      if (ac.state === "suspended") ac.resume();
+      var len = Math.floor(ac.sampleRate * dur);
+      var buf = ac.createBuffer(1, len, ac.sampleRate);
+      var data = buf.getChannelData(0);
+      for (var i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      var src = ac.createBufferSource(), g = ac.createGain();
+      src.buffer = buf;
+      g.gain.setValueAtTime(vol || 0.15, ac.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
+      src.connect(g); g.connect(ac.destination);
+      src.start();
+    } catch (e) {}
+  },
+  click: function () { this.tone(660, 0.06, "triangle", 0.08); },
+  thock: function () { this.noise(0.08, 0.2); this.tone(180, 0.09, "sine", 0.14, 90); },
+  pop: function (combo) { var f = 420 + Math.min(combo || 0, 12) * 28; this.tone(f, 0.1, "square", 0.07, f * 1.6); },
+  thud: function () { this.noise(0.16, 0.22); this.tone(90, 0.16, "sine", 0.16, 45); },
+  chime: function () { var self = this; [523, 659, 784].forEach(function (f, i) { setTimeout(function () { self.tone(f, 0.22, "sine", 0.1, 0, true); }, i * 90); }); },
+  horn: function () { this.tone(196, 0.5, "sawtooth", 0.1, 196, true); this.tone(294, 0.5, "sawtooth", 0.07, 294, true); },
+  lose: function () { var self = this; [392, 330, 262, 196].forEach(function (f, i) { setTimeout(function () { self.tone(f, 0.3, "triangle", 0.1, 0, true); }, i * 140); }); },
+  coin: function () { this.tone(988, 0.08, "sine", 0.09, 0, true); var self = this; setTimeout(function () { self.tone(1319, 0.12, "sine", 0.09, 0, true); }, 70); },
+  zap: function () { this.tone(1200, 0.12, "sawtooth", 0.06, 200); },
+  freeze: function () { this.tone(880, 0.2, "sine", 0.06, 1400); },
+};
+/* Procedural music: minor-pentatonic loop, root follows the theme.
+   Gesture-only start, vol <= 0.05, stops on pause/menu/results/mute,
+   honours AudioSys.adMuted + CG.sdkMuted (portal ads). */
+var Music = {
+  timer: null, notes: 0, step: 0, ctx: null,
+  ROOTS: [220, 196, 174.6, 164.8],
+  SCALE: [0, 3, 5, 7, 10, 12, 15],
+  start: function () {
+    if (this.timer) return;
+    if (SAVE.muted || AudioSys.adMuted || CG.sdkMuted) return;
+    var ac = AudioSys.ensure();
+    if (!ac) return;
+    this.ctx = ac;
+    var self = this;
+    this.timer = setInterval(function () { self.tick(); }, 240);
+  },
+  tick: function () {
+    if (SAVE.muted || AudioSys.adMuted || CG.sdkMuted) { this.stop(); return; }
+    var ac = this.ctx;
+    if (!ac || ac.state === "suspended") return;
+    var root = this.ROOTS[SAVE.theme % 4];
+    var deg = this.SCALE[this.step % this.SCALE.length];
+    var f = root * Math.pow(2, deg / 12);
+    if (this.step % 8 === 4) f = root / 2; // low anchor every 8th note
+    try {
+      var o = ac.createOscillator(), g = ac.createGain();
+      o.type = "triangle";
+      o.frequency.setValueAtTime(f, ac.currentTime);
+      g.gain.setValueAtTime(0.0001, ac.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.045, ac.currentTime + 0.05);
+      g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.5);
+      o.connect(g); g.connect(ac.destination);
+      o.start(); o.stop(ac.currentTime + 0.55);
+      this.notes++;
+    } catch (e) {}
+    this.step++;
+  },
+  stop: function () {
+    if (this.timer) { clearInterval(this.timer); this.timer = null; }
+  },
+};
+
+/* ---- game state ---- */
+var G = {
+  state: "menu", phase: "draft",
+  wave: 1, runSeed: 1, board: null, road: [],
+  towers: [], hand: [], selHand: -1, selTowerType: null, selTower: null,
+  gold: START_GOLD, hearts: MAX_HEARTS, score: 0, kills: 0, coinsRun: 0,
+  relics: { rangeMul: 1, goldMul: 1, slowAura: 0 },
+  earlyUnlocks: [], bonusTile: false, draftCount: 0,
+  ws: null, speed: 1, particles: [], floaters: [], shots: [],
+  shake: 0, flashCell: null, flashUntil: 0, combo: 0,
+  cursor: { x: 0, y: 3 }, usedKeyboard: false,
+  howtoFrom: "menu", time: 0, animT: 0, bossRumble: 0,
+};
+var lastFrame = 0, acc = 0;
+
+function theme() { return THEMES[SAVE.theme] || THEMES[0]; }
+function setState(s) { G.state = s; }
+function updateSoundLabels() {
+  var label = (SAVE.muted || (typeof CG !== "undefined" && CG.sdkMuted)) ? "Sound: Off" : "Sound: On";
+  ["btnSound", "btnMenuSound"].forEach(function (id) { var b = $(id); if (b) b.textContent = label; });
+}
+// Singular alias: the portal adapters call updateSoundLabel() (GamePix /
+// CrazyGames / Yandex / GD / Y8 refreshSdkMute). The plain-text label above
+// is the only implementation — no emoji anywhere (NO-EMOJI rule).
+function updateSoundLabel() { updateSoundLabels(); }
+function updateHUD() {
+  var ws = G.ws;
+  $("hudWave").textContent = "Wave " + G.wave + (G.wave <= TOTAL_WAVES ? "/" + TOTAL_WAVES : "+");
+  $("hudHeartsNum").textContent = String(G.hearts);
+  $("hudHearts").classList.toggle("low", G.hearts <= 3);
+  $("hudGoldNum").textContent = String(G.gold);
+  var liveScore = G.score + (ws ? ws.score : 0);
+  $("hudScore").textContent = "Score " + liveScore;
+  var foes = 0;
+  if (ws) foes = (ws.total - ws.spawnIdx) + ws.active.length;
+  $("hudFoes").textContent = "Foes " + foes;
+  var prog = 0;
+  if (ws && ws.total > 0) prog = Math.round(((ws.kills + ws.leaks) / ws.total) * 100);
+  $("waveBarFill").style.width = prog + "%";
+  $("btnSpeed").textContent = G.speed === 2 ? "2x" : "1x";
+  $("btnSpeed2").textContent = "Speed: " + (G.speed === 2 ? "2x" : "1x");
+  $("btnSpeed").classList.toggle("on", G.speed === 2);
+}
+function showBar(which) {
+  show($("draftBar"), which === "draft");
+  show($("buildBar"), which === "build");
+  show($("waveBar2"), which === "wave");
+  show($("towerBar"), which === "tower");
+  show($("actionBar"), G.state === "playing");
+}
+function phaseTip(msg, showIt) {
+  var el = $("phaseTip");
+  if (msg !== undefined) el.textContent = msg;
+  show(el, !!showIt);
+}
+
+/* ---- tile / tower button art (inline SVG, no emoji) ---- */
+function tileSvg(kind) {
+  var s = '<svg viewBox="0 0 34 26" aria-hidden="true">';
+  if (kind === "straight") s += '<rect x="2" y="7" width="30" height="12" rx="3" fill="#b98a56" stroke="#8a6a42" stroke-width="1.5"/><line x1="6" y1="13" x2="28" y2="13" stroke="#f4ead8" stroke-width="2" stroke-dasharray="4 3"/>';
+  else if (kind === "cornerL") s += '<path d="M4 24 L4 13 Q4 7 10 7 L30 7" fill="none" stroke="#b98a56" stroke-width="11" stroke-linecap="round"/><path d="M4 24 L4 13 Q4 7 10 7 L30 7" fill="none" stroke="#f4ead8" stroke-width="2" stroke-dasharray="4 3"/>';
+  else if (kind === "cornerR") s += '<path d="M30 24 L30 13 Q30 7 24 7 L4 7" fill="none" stroke="#b98a56" stroke-width="11" stroke-linecap="round"/><path d="M30 24 L30 13 Q30 7 24 7 L4 7" fill="none" stroke="#f4ead8" stroke-width="2" stroke-dasharray="4 3"/>';
+  else s += '<rect x="2" y="7" width="30" height="12" rx="3" fill="#8a8f98" stroke="#5a6068" stroke-width="1.5"/><line x1="6" y1="13" x2="28" y2="13" stroke="#f4ead8" stroke-width="2" stroke-dasharray="4 3"/><path d="M12 4 L17 9 L22 4" fill="none" stroke="#7fc8e8" stroke-width="2"/>';
+  return s + "</svg>";
+}
+function towerSvg(type) {
+  var s = '<svg viewBox="0 0 40 30" aria-hidden="true">';
+  if (type === "sling") s += '<rect x="17" y="15" width="6" height="13" fill="#8a6a42"/><circle cx="20" cy="12" r="10" fill="#e8d8a8" stroke="#8a6a42" stroke-width="2"/><circle cx="16" cy="11" r="2" fill="#22312b"/><circle cx="24" cy="11" r="2" fill="#22312b"/><path d="M14 18 Q20 22 26 18" fill="none" stroke="#22312b" stroke-width="1.6"/>';
+  else if (type === "boulder") s += '<rect x="17" y="17" width="6" height="11" fill="#8a6a42"/><circle cx="20" cy="13" r="11" fill="#9aa2ac" stroke="#4a5058" stroke-width="2"/><circle cx="16" cy="12" r="2.2" fill="#22312b"/><circle cx="24" cy="12" r="2.2" fill="#22312b"/><path d="M14 19 Q20 23 26 19" fill="none" stroke="#22312b" stroke-width="1.6"/>';
+  else if (type === "frost") s += '<rect x="17" y="17" width="6" height="11" fill="#5a7a8a"/><circle cx="20" cy="13" r="11" fill="#4fc3f7" stroke="#1565c0" stroke-width="2"/><g stroke="#e1f5fe" stroke-width="1.8" stroke-linecap="round"><line x1="20" y1="5" x2="20" y2="21"/><line x1="13" y1="9" x2="27" y2="17"/><line x1="27" y1="9" x2="13" y2="17"/></g><circle cx="16" cy="12" r="1.8" fill="#0d3b5e"/><circle cx="24" cy="12" r="1.8" fill="#0d3b5e"/>';
+  else s += '<rect x="17" y="17" width="6" height="11" fill="#5a4a7a"/><path d="M21 1 L26 13 L22 13 L25 22 L15 11 L19 11 Z" fill="#b388ff" stroke="#5a4a7a" stroke-width="1.2" stroke-linejoin="round"/><circle cx="20" cy="24" r="4" fill="#c9b8f5" stroke="#5a4a7a" stroke-width="1.5"/>';
+  return s + "</svg>";
+}
+function cardSvg(icon) {
+  var s = '<svg viewBox="0 0 40 40" width="40" height="40" aria-hidden="true">';
+  if (icon === "spark") s += '<path d="M22 3 L10 22 L18 22 L15 37 L30 16 L20 16 Z" fill="#9b7fe8" stroke="#5a4a7a" stroke-width="1.5" stroke-linejoin="round"/>';
+  else if (icon === "boulder") s += '<circle cx="20" cy="21" r="14" fill="#8a8f98" stroke="#5a6068" stroke-width="2"/><circle cx="15" cy="18" r="2.4" fill="#22312b"/><circle cx="25" cy="18" r="2.4" fill="#22312b"/>';
+  else if (icon === "frost") s += '<g stroke="#7fc8e8" stroke-width="2.4" stroke-linecap="round"><line x1="20" y1="6" x2="20" y2="34"/><line x1="8" y1="13" x2="32" y2="27"/><line x1="32" y1="13" x2="8" y2="27"/></g><circle cx="20" cy="20" r="4" fill="#bfe8f8"/>';
+  else if (icon === "upgrade") s += '<path d="M20 6 L26 16 L32 16 L26 26 L20 34 L14 26 L8 16 L14 16 Z" fill="#ffd94d" stroke="#a86f14" stroke-width="1.5" stroke-linejoin="round"/>';
+  else if (icon === "range") s += '<circle cx="20" cy="20" r="14" fill="none" stroke="#7fc86a" stroke-width="2.4" stroke-dasharray="4 3"/><circle cx="20" cy="20" r="5" fill="#7fc86a"/>';
+  else if (icon === "gold") s += '<circle cx="20" cy="20" r="14" fill="url(#coinGold)" stroke="#b97a0e" stroke-width="2"/><circle cx="20" cy="20" r="9" fill="none" stroke="#c98f1b" stroke-width="1.4"/>';
+  else if (icon === "aura") s += '<circle cx="20" cy="20" r="14" fill="#7fc8e8" opacity="0.35"/><circle cx="20" cy="20" r="9" fill="#7fc8e8" opacity="0.6"/><circle cx="20" cy="20" r="4" fill="#bfe8f8"/>';
+  else if (icon === "heart") s += '<path d="M20 33 C12 26.5 7 22 7 16.5 7 12.5 10 10 13.5 10 c2.4 0 4.7 1.3 6.5 3.4 C21.8 11.3 24.1 10 26.5 10 30 10 33 12.5 33 16.5 33 22 28 26.5 20 33Z" fill="url(#heartRed)" stroke="#a83a20" stroke-width="1.5"/>';
+  else s += '<rect x="7" y="9" width="26" height="22" rx="3" fill="#b98a56" stroke="#8a6a42" stroke-width="1.5"/><line x1="11" y1="20" x2="29" y2="20" stroke="#f4ead8" stroke-width="2" stroke-dasharray="4 3"/>';
+  return s + "</svg>";
+}
+function coinSvgInline(cls) {
+  return '<svg class="' + (cls || "coinSvg") + '" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10.6" fill="url(#coinGold)" stroke="#b97a0e" stroke-width="1.5"/><circle cx="12" cy="12" r="7.4" fill="none" stroke="#c98f1b" stroke-width="1.1" opacity="0.9"/><path d="M12 7.1L13.2 10.4 16.7 10.5 13.9 12.6 14.9 16 12 14 9.1 16 10.1 12.6 7.3 10.5 10.8 10.4Z" fill="#fff3b0" stroke="#d99a1f" stroke-width="0.6" stroke-linejoin="round"/><path d="M4.6 9.4A8 8 0 0 1 9.4 4.6" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" opacity="0.9"/></svg>';
+}
+
+/* ---- flow ---- */
+function showMenu() {
+  setState("menu");
+  Music.stop();
+  try { CG.gameplayStop(); } catch (e) {}
+  G.ws = null; G.selTower = null; G.selHand = -1;
+  $("menuBest").textContent = String(SAVE.best);
+  $("menuCoins").textContent = String(SAVE.coins);
+  $("menuWins").textContent = String(SAVE.wins);
+  buildThemeRow();
+  updateSoundLabels();
+  show($("menuOverlay"), true);
+  show($("howtoOverlay"), false);
+  show($("waveIntroOverlay"), false);
+  show($("waveClearOverlay"), false);
+  show($("runCompleteOverlay"), false);
+  show($("runOverOverlay"), false);
+  show($("pauseOverlay"), false);
+  show($("hud"), false);
+  showBar(null);
+  phaseTip("", false);
+  draw();
+}
+function buildThemeRow() {
+  var row = $("themeRow");
+  row.innerHTML = "";
+  THEMES.forEach(function (t, i) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "themeBtn" + (SAVE.theme === i ? " sel" : "");
+    var locked = !themeUnlocked(i, SAVE.best, SAVE.wins > 0);
+    b.disabled = locked;
+    b.textContent = t.name + (locked ? (i === 3 ? " (win a run)" : " (best wave " + t.need + ")") : "");
+    b.addEventListener("click", function () {
+      if (themeUnlocked(i, SAVE.best, SAVE.wins > 0)) {
+        SAVE.theme = i; persistSave(); buildThemeRow(); draw(); AudioSys.click();
+      }
+    });
+    row.appendChild(b);
+  });
+}
+function startRun() {
+  SAVE.runs++;
+  G.runSeed = SAVE.runs * 977 + 11;
+  G.wave = 1;
+  G.board = genBoard(G.runSeed);
+  G.road = [{ x: ENTRY.x, y: ENTRY.y }];
+  G.towers = [];
+  G.gold = START_GOLD;
+  G.hearts = MAX_HEARTS;
+  G.score = 0; G.kills = 0; G.coinsRun = 0;
+  G.relics = { rangeMul: 1, goldMul: 1, slowAura: 0 };
+  G.earlyUnlocks = []; G.bonusTile = false; G.draftCount = 0;
+  G.ws = null; G.speed = 1; G.particles = []; G.floaters = []; G.shots = [];
+  G.selTower = null; G.selHand = -1; G.selTowerType = null;
+  persistSave();
+  showWaveIntro(1);
+}
+function showWaveIntro(wave) {
+  G.wave = wave;
+  setState("playing");
+  G.phase = "intro";
+  Music.start();
+  try { CG.gameplayStart(); } catch (e) {}
+  var comp = waveComp(wave, G.runSeed);
+  $("waveIntroTitle").textContent = wave > TOTAL_WAVES ? "Endless Wave " + wave : "Wave " + wave + " of " + TOTAL_WAVES;
+  $("waveIntroText").textContent = wave === 1
+    ? "The valley stirs. Lay your road, raise your towers, and hold the Keep."
+    : (waveUnlockText(wave) || "The valley stirs. A new wave marches on your road.");
+  $("waveIntroFoes").textContent = "Foes: " + comp.total;
+  var un = waveUnlockText(wave);
+  show($("waveIntroUnlock"), !!un);
+  if (un) $("waveIntroUnlock").textContent = un;
+  show($("waveIntroOverlay"), true);
+  show($("menuOverlay"), false);
+  show($("howtoOverlay"), false);
+  show($("waveClearOverlay"), false);
+  show($("runCompleteOverlay"), false);
+  show($("runOverOverlay"), false);
+  show($("pauseOverlay"), false);
+  show($("hud"), true);
+  showBar(null);
+  updateHUD();
+  draw();
+}
+function beginDraft() {
+  show($("waveIntroOverlay"), false);
+  if (roadTouchesKeep(G.road)) { beginBuild(); return; }
+  G.phase = "draft";
+  G.draftCount++;
+  G.hand = dealHand(G.runSeed * 1000 + G.wave * 13 + G.draftCount, G.road, G.board, G.bonusTile);
+  G.bonusTile = false;
+  G.selHand = 0;
+  renderHand();
+  showBar("draft");
+  phaseTip("Tap a tile, then tap a glowing cell next to the road end.", true);
+  updateHUD();
+  draw();
+}
+function renderHand() {
+  for (var i = 0; i < 3; i++) {
+    var b = $("hand" + i);
+    var t = G.hand[i];
+    if (!t) { b.innerHTML = ""; b.disabled = true; continue; }
+    b.disabled = !!t.used;
+    b.classList.toggle("sel", G.selHand === i && !t.used);
+    b.innerHTML = tileSvg(t.kind) + '<span class="tname">' + tileName(t.kind) + '</span><span class="tsub">' + (i + 1) + '</span>';
+  }
+  var extra = $("hand3");
+  if (extra) extra.remove();
+  if (G.hand.length > 3) {
+    var b4 = document.createElement("button");
+    b4.className = "tileBtn" + (G.selHand === 3 ? " sel" : "");
+    b4.id = "hand3"; b4.type = "button";
+    var t4 = G.hand[3];
+    b4.disabled = !!t4.used;
+    b4.innerHTML = tileSvg(t4.kind) + '<span class="tname">' + tileName(t4.kind) + '</span><span class="tsub">4</span>';
+    b4.addEventListener("click", function () { selectHand(3); });
+    $("draftBar").insertBefore(b4, $("btnDoneDraft"));
+  }
+}
+function selectHand(i) {
+  if (!G.hand[i] || G.hand[i].used) return;
+  G.selHand = i;
+  renderHand();
+  AudioSys.click();
+  draw();
+}
+function placeHandTile(x, y) {
+  var t = G.hand[G.selHand];
+  if (!t || t.used) { toast("Pick a tile from your hand first."); return false; }
+  var res = canPlaceTile(G.board, G.road, G.towers, t.kind, x, y);
+  if (!res.ok) {
+    var why = { edge: "That cell is outside the valley.", keep: "The road ends at the Keep — no tile on it.", entry: "The road starts at the Entry.", road: "That cell is already road.", rock: "Rock! Use a Bridge tile to cross it.", "bridge-needs-rock": "A Bridge only crosses rock.", shape: "That tile does not fit there — check its shape.", "no-route": "No route! That would cut the Keep off." }[res.why] || "Cannot place there.";
+    toast(why);
+    G.flashCell = { x: x, y: y, until: G.time + 0.4 };
+    AudioSys.tone(140, 0.12, "square", 0.08);
+    draw();
+    return false;
+  }
+  G.road = res.newRoad;
+  t.used = true;
+  AudioSys.thock();
+  addDust(x, y);
+  if (roadTouchesKeep(G.road)) {
+    var bonus = 0;
+    G.hand.forEach(function (h) { if (!h.used) { h.used = true; bonus += 10; } });
+    if (bonus > 0) { G.gold += bonus; toast("Road complete! Unused tiles became +" + bonus + " gold."); }
+    else toast("Road complete! The Keep is reached.");
+    renderHand();
+    beginBuild();
+    return true;
+  }
+  if (G.hand.every(function (h) { return h.used; })) { beginBuild(); return true; }
+  var next = -1;
+  for (var i = 0; i < G.hand.length; i++) if (!G.hand[i].used) { next = i; break; }
+  G.selHand = next;
+  renderHand();
+  updateHUD();
+  draw();
+  return true;
+}
+function endDraft() {
+  G.hand.forEach(function (h) { h.used = true; });
+  beginBuild();
+}
+function beginBuild() {
+  G.phase = "build";
+  G.selHand = -1;
+  renderTowerBar();
+  showBar("build");
+  phaseTip("Tap a tower card, then tap a grass cell beside the road. Tap a tower to upgrade or sell.", true);
+  updateHUD();
+  draw();
+}
+function renderTowerBar() {
+  TOWER_ORDER.forEach(function (id, i) {
+    var b = $("tower" + i);
+    var def = TOWERS[id];
+    var unlocked = towerUnlocked(id, G.wave, G.earlyUnlocks);
+    b.disabled = !unlocked || G.gold < def.cost;
+    b.classList.toggle("sel", G.selTowerType === id);
+    b.innerHTML = towerSvg(id) + '<span class="tname">' + def.name + '</span><span class="tsub">' + def.desc + " · R" + def.range + '</span><span class="tcost">' + coinSvgInline() + def.cost + (unlocked ? "" : " · W" + def.unlockWave) + "</span>";
+  });
+}
+function selectTowerType(id) {
+  if (!towerUnlocked(id, G.wave, G.earlyUnlocks)) { toast(TOWERS[id].name + " unlocks on wave " + TOWERS[id].unlockWave + "."); return; }
+  if (G.gold < TOWERS[id].cost) { toast("Not enough gold for " + TOWERS[id].name + "."); return; }
+  G.selTowerType = (G.selTowerType === id) ? null : id;
+  G.selTower = null;
+  showBar("build");
+  renderTowerBar();
+  AudioSys.click();
+  draw();
+}
+function tryBuildTower(x, y) {
+  var id = G.selTowerType;
+  if (!id) return false;
+  var def = TOWERS[id];
+  if (G.gold < def.cost) { toast("Not enough gold."); return false; }
+  var k = cellKey(x, y);
+  if (roadSet(G.road)[k]) { toast("Towers go on grass, not on the road."); return false; }
+  if (G.board.rocks[k]) { toast("Rock! Towers go on grass."); return false; }
+  if ((x === ENTRY.x && y === ENTRY.y) || (x === KEEP.x && y === KEEP.y)) { toast("Cannot build on the gate or the Keep."); return false; }
+  if (G.towers.some(function (t) { return t.x === x && t.y === y; })) { toast("A tower already stands there."); return false; }
+  var probe = G.towers.concat([{ x: x, y: y, type: id, level: 1, cd: 0 }]);
+  if (!routePossible(G.board, G.road, probe)) { toast("No route! That would cut the Keep off."); G.flashCell = { x: x, y: y, until: G.time + 0.4 }; draw(); return false; }
+  G.gold -= def.cost;
+  G.towers.push({ x: x, y: y, type: id, level: 1, cd: 0 });
+  AudioSys.thock();
+  addDust(x, y);
+  renderTowerBar();
+  updateHUD();
+  draw();
+  return true;
+}
+function selectTower(x, y) {
+  var t = null;
+  G.towers.forEach(function (tw) { if (tw.x === x && tw.y === y) t = tw; });
+  if (!t) { G.selTower = null; showBar(G.phase === "build" ? "build" : "wave"); return; }
+  G.selTower = t;
+  G.selTowerType = null;
+  var def = TOWERS[t.type];
+  $("towerName").textContent = def.name + " Lv" + t.level;
+  var up = $("btnUpgrade");
+  if (t.level >= 3) { up.disabled = true; up.textContent = "Max Level"; }
+  else {
+    var c = def.upCost[t.level - 1];
+    up.disabled = G.gold < c;
+    up.innerHTML = "Upgrade " + coinSvgInline() + c; // innerHTML, not textContent: the coin is SVG markup
+  }
+  $("btnSell").innerHTML = "Sell +" + coinSvgInline() + towerSellValue(t);
+  showBar("tower");
+  AudioSys.click();
+  draw();
+}
+function upgradeTower() {
+  var t = G.selTower;
+  if (!t || t.level >= 3) return;
+  var c = TOWERS[t.type].upCost[t.level - 1];
+  if (G.gold < c) { toast("Not enough gold to upgrade."); return; }
+  G.gold -= c;
+  t.level++;
+  AudioSys.coin();
+  addDust(t.x, t.y);
+  selectTower(t.x, t.y);
+  updateHUD();
+  draw();
+}
+function sellTower() {
+  var t = G.selTower;
+  if (!t) return;
+  G.gold += towerSellValue(t);
+  G.towers = G.towers.filter(function (tw) { return tw !== t; });
+  AudioSys.coin();
+  G.selTower = null;
+  showBar(G.phase === "build" ? "build" : "wave");
+  if (G.phase === "build") renderTowerBar();
+  updateHUD();
+  draw();
+}
+function startWave() {
+  if (G.phase !== "build") return;
+  var comp = waveComp(G.wave, G.runSeed);
+  G.ws = newWaveState(G.road, G.towers, G.relics, G.wave, G.runSeed, G.hearts);
+  G.phase = "wave";
+  G.selTower = null; G.selTowerType = null;
+  showBar("wave");
+  phaseTip("", false);
+  if (comp.queue.some(function (q) { return q.type === "brute"; })) { AudioSys.horn(); G.bossRumble = 0.8; }
+  else AudioSys.click();
+  $("waveStatus").textContent = "Wave " + G.wave + " — hold the road!";
+  updateHUD();
+  draw();
+}
+function toggleSpeed() {
+  G.speed = G.speed === 1 ? 2 : 1;
+  updateHUD();
+}
+function onWaveCleared() {
+  var ws = G.ws;
+  G.score += ws.score;
+  G.kills += ws.kills;
+  G.gold += ws.gold;
+  G.coinsRun += ws.coinsEarned;
+  SAVE.coins += ws.coinsEarned;
+  if (G.wave > SAVE.best) SAVE.best = G.wave;
+  persistSave();
+  G.ws = null;
+  AudioSys.chime();
+  pebbleConfetti();
+  if (G.wave >= TOTAL_WAVES) { runComplete(); return; }
+  var cards = dealCards(G.runSeed, G.wave, G.towers, G.earlyUnlocks);
+  G.cards = cards;
+  $("waveClearTitle").textContent = "Wave " + G.wave + " Cleared!";
+  $("waveClearText").textContent = "Pick 1 of 3 draft cards — then the next wave marches.";
+  $("waveClearCoins").textContent = String(ws.coinsEarned);
+  var row = $("draftCards");
+  row.innerHTML = "";
+  cards.forEach(function (c) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "draftCard";
+    b.innerHTML = '<div class="cicon">' + cardSvg(c.icon) + '</div><div class="cname">' + c.name + '</div><div class="cdesc">' + c.desc + "</div>";
+    b.addEventListener("click", function () { applyCard(c); });
+    row.appendChild(b);
+  });
+  setState("waveclear");
+  show($("waveClearOverlay"), true);
+  showBar(null);
+  phaseTip("", false);
+  try { CG.gameplayStop(); CG.setContext(G.wave, G.score); } catch (e) {}
+  updateHUD();
+  draw();
+}
+function applyCard(c) {
+  show($("waveClearOverlay"), false);
+  if (c.id === "unlock-spark") G.earlyUnlocks.push("spark");
+  else if (c.id === "unlock-boulder") G.earlyUnlocks.push("boulder");
+  else if (c.id === "unlock-frost") G.earlyUnlocks.push("frost");
+  else if (c.id === "upgrade") {
+    var up = G.towers.filter(function (t) { return t.level < 3; });
+    if (up.length) { var t = up[Math.floor(Math.random() * up.length)]; t.level++; toast(TOWERS[t.type].name + " upgraded to level " + t.level + "!"); }
+    else { G.gold += 30; toast("All towers maxed — +30 gold instead."); }
+  }
+  else if (c.id === "relic-range") G.relics.rangeMul = +(G.relics.rangeMul * 1.1).toFixed(3);
+  else if (c.id === "relic-gold") G.relics.goldMul = +(G.relics.goldMul * 1.15).toFixed(3);
+  else if (c.id === "relic-aura") G.relics.slowAura = Math.min(0.3, (G.relics.slowAura || 0) + 0.1);
+  else if (c.id === "relic-heart") { G.hearts = Math.min(MAX_HEARTS, G.hearts + 2); }
+  else if (c.id === "gold-cache") G.gold += 60;
+  else if (c.id === "bonus-tile") G.bonusTile = true;
+  AudioSys.coin();
+  showWaveIntro(G.wave + 1);
+}
+function runComplete() {
+  SAVE.wins++;
+  if (G.wave > SAVE.best) SAVE.best = G.wave;
+  SAVE.coins += 50;
+  G.coinsRun += 50;
+  persistSave();
+  var stars = starsForRun(G.hearts);
+  $("runScore").textContent = String(G.score);
+  $("runCoins").textContent = String(G.coinsRun + 50);
+  $("runBest").textContent = String(Math.max(SAVE.best, TOTAL_WAVES));
+  renderStars(stars);
+  coinBurst();
+  AudioSys.chime();
+  setState("runcomplete");
+  show($("waveClearOverlay"), false);
+  show($("runCompleteOverlay"), true);
+  showBar(null);
+  Music.stop();
+  try { CG.gameplayStop(); CG.happytime(); } catch (e) {}
+  updateHUD();
+  draw();
+}
+function runOver() {
+  if (G.wave > SAVE.best) SAVE.best = Math.max(SAVE.best, G.wave - 1);
+  persistSave();
+  $("runOverText").textContent = "The valley overran on wave " + G.wave + ". Your coins stay with you.";
+  $("overScore").textContent = String(G.score);
+  $("overBest").textContent = String(SAVE.best);
+  AudioSys.lose();
+  setState("runover");
+  show($("waveClearOverlay"), false);
+  show($("runCompleteOverlay"), false);
+  show($("runOverOverlay"), true);
+  showBar(null);
+  Music.stop();
+  try { CG.gameplayStop(); } catch (e) {}
+  updateHUD();
+  draw();
+}
+function renderStars(n) {
+  var s = "";
+  for (var i = 0; i < 3; i++) {
+    if (i < n) s += '<span class="starPop" style="animation-delay:' + (i * 0.15) + 's">\u2605</span>';
+    else s += '<span class="dim">\u2605</span>';
+  }
+  $("starsRow").innerHTML = s;
+}
+function pauseGame() {
+  if (G.state !== "playing") return;
+  G.prevState = "playing";
+  setState("paused");
+  Music.stop();
+  try { CG.gameplayStop(); } catch (e) {}
+  $("pauseInfo").textContent = "Wave " + G.wave + " — Score " + (G.score + (G.ws ? G.ws.score : 0));
+  show($("pauseOverlay"), true);
+  draw();
+}
+function resumeGame() {
+  if (G.state !== "paused") return;
+  setState("playing");
+  show($("pauseOverlay"), false);
+  show($("howtoOverlay"), false);
+  if (G.phase === "wave" || G.phase === "build" || G.phase === "draft") Music.start();
+  try { CG.gameplayStart(); } catch (e) {}
+  draw();
+}
+function openHowto(from) {
+  G.howtoFrom = from || "menu";
+  if (G.state === "playing") { pauseGame(); }
+  show($("howtoOverlay"), true);
+  show($("menuOverlay"), false);
+}
+function closeHowto() {
+  show($("howtoOverlay"), false);
+  if (G.howtoFrom === "pause" || G.state === "paused") { show($("pauseOverlay"), true); return; }
+  if (G.state === "menu" || G.state === "paused") showMenu();
+}
+function toggleMute() {
+  SAVE.muted = !SAVE.muted;
+  persistSave();
+  updateSoundLabels();
+  if (SAVE.muted) Music.stop();
+  else if (G.state === "playing") Music.start();
+  AudioSys.click();
+}
+
+/* ---- particles / floaters ---- */
+function addDust(x, y) {
+  var c = cellCenter(x, y);
+  for (var i = 0; i < 8; i++) {
+    G.particles.push({ kind: "dust", x: c.x + (Math.random() - 0.5) * 30, y: c.y + (Math.random() - 0.5) * 30, vx: (Math.random() - 0.5) * 40, vy: -20 - Math.random() * 30, life: 0.5, max: 0.5, r: 3 + Math.random() * 4 });
+  }
+}
+function pebbleConfetti() {
+  var g = boardGeom();
+  for (var i = 0; i < 40; i++) {
+    G.particles.push({ kind: "pebble", x: g.x0 + Math.random() * g.bw, y: g.y0 - 10, vx: (Math.random() - 0.5) * 60, vy: 60 + Math.random() * 90, life: 1.6, max: 1.6, r: 3 + Math.random() * 4, col: ["#b98a56", "#8a8f98", "#e8a33d", "#4a7a52"][i % 4] });
+  }
+}
+function coinBurst() {
+  var cx = 480, cy = 300;
+  for (var i = 0; i < 80; i++) {
+    var a = (i / 80) * Math.PI * 2 + Math.random() * 0.3;
+    var sp = 60 + Math.random() * 160;
+    G.particles.push({ kind: i < 32 ? "coin" : "pebble", x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 60, life: 1.4, max: 1.4, r: 5 + Math.random() * 4, spin: Math.random() * Math.PI * 2 });
+  }
+}
+function addFloater(x, y, text, col) {
+  G.floaters.push({ x: x, y: y, text: text, col: col || "#ffd166", life: 0.9, max: 0.9 });
+}
+
+/* ---- simulation step (fixed timestep) ---- */
+function stepGame(dt) {
+  G.time += dt;
+  G.animT += dt;
+  if (G.bossRumble > 0) G.bossRumble = Math.max(0, G.bossRumble - dt);
+  if (G.shake > 0) G.shake = Math.max(0, G.shake - dt * 3);
+  // particles
+  for (var i = G.particles.length - 1; i >= 0; i--) {
+    var p = G.particles[i];
+    p.life -= dt;
+    p.x += (p.vx || 0) * dt; p.y += (p.vy || 0) * dt;
+    if (p.vy !== undefined && p.kind === "pebble") p.vy += 120 * dt;
+    if (p.kind === "coin") { p.vy += 260 * dt; p.spin = (p.spin || 0) + dt * 6; }
+    if (p.life <= 0) G.particles.splice(i, 1);
+  }
+  for (var j = G.floaters.length - 1; j >= 0; j--) {
+    var f = G.floaters[j];
+    f.life -= dt; f.y -= 34 * dt;
+    if (f.life <= 0) G.floaters.splice(j, 1);
+  }
+  if (G.state !== "playing" || G.phase !== "wave" || !G.ws) return;
+  var ws = G.ws;
+  var killsBefore = ws.kills, leaksBefore = ws.leaks;
+  var activeBefore = ws.active.map(function (e) { return e.id; });
+  waveStep(ws, dt * 1); // dt already scaled by speed in the rAF loop
+  // juice for fresh kills / leaks
+  if (ws.kills > killsBefore) {
+    var nk = ws.kills - killsBefore;
+    G.combo++;
+    AudioSys.pop(G.combo);
+    // floater at the keep-side is wrong; use last kill position approx: centre board
+    addFloater(480, 180, "+" + (10 * waveMultiplier(ws.wave)) + (nk > 1 ? " x" + nk : ""), "#ffd166");
+  } else if (ws.active.length === 0 && ws.spawnIdx >= ws.queue.length) {
+    G.combo = 0;
+  }
+  if (ws.leaks > leaksBefore) {
+    G.combo = 0;
+    G.shake = 0.45;
+    AudioSys.thud();
+    G.hearts = ws.hearts;
+    updateHUD();
+  }
+  if (ws.lastKill === "brute") { /* boss kill: extra burst */ }
+  G.hearts = ws.hearts;
+  updateHUD();
+  if (ws.over) {
+    G.ws = null;
+    runOver();
+  } else if (ws.cleared) {
+    onWaveCleared();
+  }
+}
+
+/* ---- drawing ---- */
+function drawCoin(c, x, y, r, spin) {
+  var squish = spin !== undefined ? Math.abs(Math.cos(spin)) : 1;
+  var rx = Math.max(1, r * (0.35 + 0.65 * squish));
+  c.save();
+  c.translate(x, y);
+  var g = c.createRadialGradient(-r * 0.3, -r * 0.35, r * 0.1, 0, 0, r);
+  g.addColorStop(0, "#fff3b0"); g.addColorStop(0.45, "#ffd94d");
+  g.addColorStop(0.8, "#f5a623"); g.addColorStop(1, "#d18a12");
+  c.beginPath(); c.ellipse(0, 0, rx, r, 0, 0, Math.PI * 2);
+  c.fillStyle = g; c.fill();
+  c.lineWidth = 1.5; c.strokeStyle = "#b97a0e"; c.stroke();
+  c.beginPath(); c.ellipse(0, 0, rx * 0.7, r * 0.7, 0, 0, Math.PI * 2);
+  c.strokeStyle = "#c98f1b"; c.lineWidth = 1.1; c.stroke();
+  c.beginPath();
+  var s = r * 0.45;
+  c.moveTo(0, -s); c.lineTo(s * 0.28, -s * 0.25); c.lineTo(s, -s * 0.2);
+  c.lineTo(s * 0.45, s * 0.2); c.lineTo(s * 0.55, s * 0.8); c.lineTo(0, s * 0.45);
+  c.lineTo(-s * 0.55, s * 0.8); c.lineTo(-s * 0.45, s * 0.2); c.lineTo(-s, -s * 0.2);
+  c.lineTo(-s * 0.28, -s * 0.25); c.closePath();
+  c.fillStyle = "#fff3b0"; c.fill();
+  c.restore();
+}
+function roundRect(c, x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r);
+  c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r);
+  c.arcTo(x, y, x + w, y, r);
+  c.closePath();
+}
+function draw() {
+  var g = boardGeom();
+  ctx.save();
+  ctx.clearRect(0, 0, 960, 600);
+  // valley backdrop
+  var bg = ctx.createLinearGradient(0, 0, 0, 600);
+  var th = theme();
+  bg.addColorStop(0, "#2a3f34"); bg.addColorStop(0.55, "#22312b"); bg.addColorStop(1, "#1a2620");
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, 960, 600);
+  // soft hills
+  ctx.fillStyle = "rgba(74,122,82,0.25)";
+  ctx.beginPath(); ctx.moveTo(0, 600); ctx.quadraticCurveTo(240, 470, 480, 560); ctx.quadraticCurveTo(720, 640, 960, 520); ctx.lineTo(960, 600); ctx.closePath(); ctx.fill();
+  var shx = G.shake > 0 ? (Math.random() - 0.5) * 8 * G.shake : 0;
+  var shy = G.shake > 0 ? (Math.random() - 0.5) * 8 * G.shake : 0;
+  var brx = G.bossRumble > 0 ? (Math.random() - 0.5) * 4 : 0;
+  ctx.translate(shx + brx, shy);
+  // grass board
+  for (var y = 0; y < ROWS; y++) {
+    for (var x = 0; x < COLS; x++) {
+      var px = g.x0 + x * g.cell, py = g.y0 + y * g.cell;
+      ctx.fillStyle = (x + y) % 2 === 0 ? th.grass : th.grass2;
+      ctx.fillRect(px, py, g.cell, g.cell);
+      // grass tufts
+      ctx.strokeStyle = "rgba(0,0,0,0.12)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(px + 10, py + 44); ctx.lineTo(px + 13, py + 36);
+      ctx.moveTo(px + 48, py + 18); ctx.lineTo(px + 51, py + 10);
+      ctx.stroke();
+    }
+  }
+  ctx.strokeStyle = "rgba(0,0,0,0.35)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(g.x0 - 1, g.y0 - 1, g.bw + 2, g.bh + 2);
+  var rset = roadSet(G.road);
+  // road tiles (shape derived from in/out directions)
+  G.road.forEach(function (cell, i) {
+    var px = g.x0 + cell.x * g.cell, py = g.y0 + cell.y * g.cell;
+    var cx = px + g.cell / 2, cy = py + g.cell / 2;
+    ctx.fillStyle = th.road;
+    roundRect(ctx, px + 3, py + 3, g.cell - 6, g.cell - 6, 10);
+    ctx.fill();
+    ctx.strokeStyle = th.roadEdge; ctx.lineWidth = 2;
+    ctx.stroke();
+    // connector to next cell
+    if (i < G.road.length - 1) {
+      var n = G.road[i + 1];
+      var nx = px + g.cell / 2 + (n.x - cell.x) * g.cell / 2;
+      var ny = py + g.cell / 2 + (n.y - cell.y) * g.cell / 2;
+      ctx.strokeStyle = th.road; ctx.lineWidth = g.cell - 14;
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(nx, ny); ctx.stroke();
+    }
+    // pebble dots on the road
+    ctx.fillStyle = "rgba(0,0,0,0.15)";
+    ctx.beginPath(); ctx.arc(px + 14, py + 16, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(px + 46, py + 44, 3, 0, Math.PI * 2); ctx.fill();
+  });
+  // entry gate
+  (function () {
+    var c = cellCenter(ENTRY.x, ENTRY.y);
+    ctx.fillStyle = "#5a4028";
+    ctx.fillRect(c.x - 34, c.y - 30, 8, 60);
+    ctx.fillRect(c.x + 26, c.y - 30, 8, 60);
+    ctx.fillStyle = "#7a5a34";
+    ctx.fillRect(c.x - 34, c.y - 32, 68, 10);
+    ctx.fillStyle = "#f4ead8";
+    ctx.font = "900 11px 'Trebuchet MS', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("ENTRY", c.x, c.y - 36);
+  })();
+  // keep
+  (function () {
+    var c = cellCenter(KEEP.x, KEEP.y);
+    ctx.fillStyle = "#8a8f98";
+    roundRect(ctx, c.x - 26, c.y - 22, 52, 48, 6); ctx.fill();
+    ctx.strokeStyle = "#5a6068"; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = "#8a8f98";
+    ctx.fillRect(c.x - 26, c.y - 30, 12, 10); ctx.fillRect(c.x - 6, c.y - 30, 12, 10); ctx.fillRect(c.x + 14, c.y - 30, 12, 10);
+    ctx.fillStyle = "#22312b";
+    ctx.fillRect(c.x - 8, c.y + 4, 16, 22);
+    ctx.fillStyle = "#e4572e";
+    ctx.font = "900 12px 'Trebuchet MS', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("KEEP " + G.hearts, c.x, c.y - 36);
+  })();
+  // rocks
+  Object.keys(G.board ? G.board.rocks : {}).forEach(function (k) {
+    var parts = k.split(",");
+    var x = +parts[0], y = +parts[1];
+    if (rset[k]) return; // bridged rock is under the road
+    var c = cellCenter(x, y);
+    ctx.fillStyle = th.rock;
+    ctx.beginPath(); ctx.ellipse(c.x, c.y + 4, 22, 17, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.18)";
+    ctx.beginPath(); ctx.ellipse(c.x - 6, c.y - 3, 10, 6, -0.4, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.3)"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.ellipse(c.x, c.y + 4, 22, 17, 0, 0, Math.PI * 2); ctx.stroke();
+  });
+  // placement hints (draft phase, selected tile)
+  if (G.state === "playing" && G.phase === "draft" && G.selHand >= 0 && G.hand[G.selHand] && !G.hand[G.selHand].used) {
+    var t = tileTarget(G.road, G.hand[G.selHand].kind);
+    if (inBounds(t.x, t.y)) {
+      var tc = cellCenter(t.x, t.y);
+      var ok = canPlaceTile(G.board, G.road, G.towers, G.hand[G.selHand].kind, t.x, t.y).ok;
+      ctx.fillStyle = ok ? "rgba(255,209,77,0.35)" : "rgba(228,87,46,0.35)";
+      roundRect(ctx, tc.x - 28, tc.y - 28, 56, 56, 10); ctx.fill();
+      ctx.strokeStyle = ok ? "#ffd94d" : "#e4572e"; ctx.lineWidth = 2.5; ctx.stroke();
+    }
+  }
+  // build hints: grass cells beside the road glow faintly
+  if (G.state === "playing" && G.phase === "build" && G.selTowerType) {
+    for (var by = 0; by < ROWS; by++) for (var bx = 0; bx < COLS; bx++) {
+      var bk = cellKey(bx, by);
+      if (rset[bk] || G.board.rocks[bk] || (bx === ENTRY.x && by === ENTRY.y) || (bx === KEEP.x && by === KEEP.y)) continue;
+      if (G.towers.some(function (tw) { return tw.x === bx && tw.y === by; })) continue;
+      var bc = cellCenter(bx, by);
+      ctx.fillStyle = "rgba(127,200,106,0.14)";
+      roundRect(ctx, bc.x - 26, bc.y - 26, 52, 52, 8); ctx.fill();
+    }
+  }
+  // selected tower range ring
+  if (G.selTower) {
+    var sc = cellCenter(G.selTower.x, G.selTower.y);
+    var def = TOWERS[G.selTower.type];
+    ctx.beginPath();
+    ctx.arc(sc.x, sc.y, def.range * g.cell * (G.relics.rangeMul || 1), 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255,209,77,0.12)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,209,77,0.8)"; ctx.lineWidth = 2;
+    ctx.setLineDash([6, 5]); ctx.stroke(); ctx.setLineDash([]);
+  }
+  // towers
+  G.towers.forEach(function (tw) {
+    var c = cellCenter(tw.x, tw.y);
+    var def = TOWERS[tw.type];
+    var bob = Math.sin(G.animT * 2 + tw.x * 1.3 + tw.y) * 1.5;
+    var body = { sling: "#d8c49a", boulder: "#8a8f98", frost: "#7fc8e8", spark: "#c9b8f5" }[tw.type];
+    var rim = { sling: "#8a6a42", boulder: "#5a6068", frost: "#3a6a8a", spark: "#5a4a7a" }[tw.type];
+    ctx.fillStyle = "#5a4028";
+    ctx.fillRect(c.x - 4, c.y + 8, 8, 12);
+    ctx.beginPath(); ctx.arc(c.x, c.y + bob - 2, 20, 0, Math.PI * 2);
+    ctx.fillStyle = body; ctx.fill();
+    ctx.lineWidth = 2.5; ctx.strokeStyle = rim; ctx.stroke();
+    // determined eyes
+    ctx.fillStyle = "#22312b";
+    ctx.beginPath(); ctx.arc(c.x - 7, c.y - 4 + bob, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(c.x + 7, c.y - 4 + bob, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "#22312b"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(c.x - 10, c.y - 10 + bob); ctx.lineTo(c.x - 4, c.y - 8 + bob); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(c.x + 10, c.y - 10 + bob); ctx.lineTo(c.x + 4, c.y - 8 + bob); ctx.stroke();
+    // type marker
+    if (tw.type === "boulder") { ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.beginPath(); ctx.arc(c.x + 8, c.y + 6 + bob, 4, 0, Math.PI * 2); ctx.fill(); }
+    if (tw.type === "frost") { ctx.strokeStyle = "#e8f8ff"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(c.x, c.y + 8 + bob); ctx.lineTo(c.x, c.y + 14 + bob); ctx.stroke(); }
+    if (tw.type === "spark") { ctx.fillStyle = "#9b7fe8"; ctx.beginPath(); ctx.moveTo(c.x, c.y - 20 + bob); ctx.lineTo(c.x + 4, c.y - 10 + bob); ctx.lineTo(c.x + 1, c.y - 10 + bob); ctx.lineTo(c.x + 4, c.y - 2 + bob); ctx.lineTo(c.x - 3, c.y - 10 + bob); ctx.lineTo(c.x, c.y - 10 + bob); ctx.closePath(); ctx.fill(); }
+    // level pips
+    for (var li = 0; li < tw.level; li++) {
+      ctx.fillStyle = "#ffd94d";
+      ctx.beginPath(); ctx.arc(c.x - 8 + li * 8, c.y + 18 + bob, 2.6, 0, Math.PI * 2); ctx.fill();
+    }
+    if (G.selTower === tw) {
+      ctx.strokeStyle = "#ffd94d"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(c.x, c.y + bob - 2, 24, 0, Math.PI * 2); ctx.stroke();
+    }
+  });
+  // enemies
+  var pts = waypoints(G.road);
+  if (G.ws) {
+    G.ws.active.forEach(function (e) {
+      var p = enemyPos(pts, e.dist);
+      var c = cellCenter(0, 0);
+      var px = g.x0 + p.x * g.cell + g.cell / 2;
+      var py = g.y0 + p.y * g.cell + g.cell / 2;
+      var defE = ENEMIES[e.type];
+      var r = e.type === "brute" ? 26 : e.type === "swarm" ? 9 : e.type === "flyer" ? 14 : 16;
+      var col = { grunt: "#a8875e", runner: "#c96f2e", shielded: "#7a828c", swarm: "#8a6a42", flyer: "#7fc8e8", brute: "#5e3a2e" }[e.type];
+      if (e.type === "flyer") {
+        ctx.fillStyle = "rgba(0,0,0,0.25)";
+        ctx.beginPath(); ctx.ellipse(px, py + 14, 12, 4, 0, 0, Math.PI * 2); ctx.fill();
+        py -= 10 + Math.sin(G.animT * 6 + e.id) * 2;
+        ctx.strokeStyle = "rgba(255,255,255,0.75)"; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(px - r, py - 2); ctx.quadraticCurveTo(px - r - 8, py - 14, px - r + 2, py - 12); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(px + r, py - 2); ctx.quadraticCurveTo(px + r + 8, py - 14, px + r - 2, py - 12); ctx.stroke();
+      }
+      var wob = Math.sin(G.animT * 5 + e.id * 2) * 1.5;
+      ctx.beginPath(); ctx.arc(px, py + wob, r, 0, Math.PI * 2);
+      ctx.fillStyle = col; ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = "rgba(0,0,0,0.4)"; ctx.stroke();
+      if (e.type === "shielded") {
+        ctx.strokeStyle = "#c9d3dc"; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(px, py + wob, r + 2, Math.PI * 0.15, Math.PI * 0.85); ctx.stroke();
+      }
+      if (e.type === "brute") {
+        ctx.fillStyle = "#e8a33d";
+        ctx.beginPath(); ctx.moveTo(px - 12, py - r + 4 + wob); ctx.lineTo(px - 6, py - r - 8 + wob); ctx.lineTo(px, py - r + 2 + wob); ctx.lineTo(px + 6, py - r - 8 + wob); ctx.lineTo(px + 12, py - r + 4 + wob); ctx.closePath(); ctx.fill();
+      }
+      // grumpy eyes
+      ctx.fillStyle = "#fff";
+      ctx.beginPath(); ctx.arc(px - r * 0.35, py - r * 0.2 + wob, r * 0.22, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(px + r * 0.35, py - r * 0.2 + wob, r * 0.22, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#1a2620";
+      ctx.beginPath(); ctx.arc(px - r * 0.35, py - r * 0.15 + wob, r * 0.11, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(px + r * 0.35, py - r * 0.15 + wob, r * 0.11, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "#1a2620"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(px - r * 0.55, py - r * 0.55 + wob); ctx.lineTo(px - r * 0.15, py - r * 0.4 + wob); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(px + r * 0.55, py - r * 0.55 + wob); ctx.lineTo(px + r * 0.15, py - r * 0.4 + wob); ctx.stroke();
+      // frost slow tint
+      if (G.ws.time < e.slowUntil) {
+        ctx.fillStyle = "rgba(127,200,232,0.35)";
+        ctx.beginPath(); ctx.arc(px, py + wob, r, 0, Math.PI * 2); ctx.fill();
+      }
+      if (e.hitFlash > 0) {
+        ctx.fillStyle = "rgba(255,255,255,0.5)";
+        ctx.beginPath(); ctx.arc(px, py + wob, r, 0, Math.PI * 2); ctx.fill();
+      }
+      // hp bar
+      if (e.hp < e.maxHp) {
+        var bw = r * 2;
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.fillRect(px - bw / 2, py - r - 10, bw, 5);
+        ctx.fillStyle = e.hp / e.maxHp > 0.5 ? "#7fc86a" : e.hp / e.maxHp > 0.25 ? "#ffd94d" : "#e4572e";
+        ctx.fillRect(px - bw / 2, py - r - 10, bw * Math.max(0, e.hp / e.maxHp), 5);
+      }
+    });
+  }
+  // shots (projectiles)
+  G.shots.forEach(function (s) {
+    var t = 1 - s.life / s.max;
+    var x = s.x0 + (s.x1 - s.x0) * t, y = s.y0 + (s.y1 - s.y0) * t - (s.arc ? Math.sin(t * Math.PI) * s.arc : 0);
+    if (s.kind === "bolt") {
+      ctx.strokeStyle = "#e8d8ff"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(s.x0, s.y0); ctx.lineTo(x, y); ctx.stroke();
+    } else if (s.kind === "snow") {
+      ctx.fillStyle = "#bfe8f8";
+      ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
+    } else {
+      ctx.fillStyle = s.kind === "boulder" ? "#6f757e" : "#d8c49a";
+      ctx.beginPath(); ctx.arc(x, y, s.kind === "boulder" ? 7 : 4, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.35)"; ctx.lineWidth = 1; ctx.stroke();
+    }
+  });
+  // particles
+  G.particles.forEach(function (p) {
+    var a = clamp(p.life / p.max, 0, 1);
+    if (p.kind === "coin") {
+      ctx.globalAlpha = a;
+      drawCoin(ctx, p.x, p.y, p.r, p.spin);
+      ctx.globalAlpha = 1;
+    } else if (p.kind === "pebble") {
+      ctx.globalAlpha = a;
+      ctx.fillStyle = p.col || "#b98a56";
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    } else {
+      ctx.globalAlpha = a * 0.6;
+      ctx.fillStyle = "#d8c49a";
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r * (1 + (1 - a)), 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  });
+  // floaters
+  ctx.font = "900 18px 'Trebuchet MS', sans-serif";
+  ctx.textAlign = "center";
+  G.floaters.forEach(function (f) {
+    ctx.globalAlpha = clamp(f.life / f.max, 0, 1);
+    ctx.fillStyle = f.col;
+    ctx.strokeStyle = "rgba(0,0,0,0.6)"; ctx.lineWidth = 3;
+    ctx.strokeText(f.text, f.x, f.y);
+    ctx.fillText(f.text, f.x, f.y);
+    ctx.globalAlpha = 1;
+  });
+  // flash cell
+  if (G.flashCell && G.time < G.flashCell.until) {
+    var fc = cellCenter(G.flashCell.x, G.flashCell.y);
+    ctx.fillStyle = "rgba(228,87,46,0.4)";
+    roundRect(ctx, fc.x - 28, fc.y - 28, 56, 56, 10); ctx.fill();
+  }
+  // keyboard cursor
+  if (G.usedKeyboard && G.state === "playing") {
+    var kc = cellCenter(G.cursor.x, G.cursor.y);
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.5;
+    ctx.setLineDash([5, 4]);
+    roundRect(ctx, kc.x - 28, kc.y - 28, 56, 56, 10); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+}
+
+/* ---- input ---- */
+function onCanvasTap(clientX, clientY) {
+  if (G.state !== "playing") return;
+  var cell = canvasToCell(clientX, clientY);
+  if (!cell) return;
+  G.cursor = { x: cell.x, y: cell.y };
+  if (G.phase === "draft") {
+    placeHandTile(cell.x, cell.y);
+  } else if (G.phase === "build") {
+    // A tower cell always selects the tower first — even while a tower
+    // card is picked (otherwise the tap tries to build on top of it).
+    var tw = G.towers.some(function (t) { return t.x === cell.x && t.y === cell.y; });
+    if (tw) { selectTower(cell.x, cell.y); return; }
+    if (G.selTowerType) { tryBuildTower(cell.x, cell.y); return; }
+    selectTower(cell.x, cell.y);
+  } else if (G.phase === "wave") {
+    selectTower(cell.x, cell.y);
+  }
+}
+canvas.addEventListener("pointerdown", function (ev) {
+  ev.preventDefault();
+  AudioSys.ensure();
+  if (G.state === "menu") return;
+  onCanvasTap(ev.clientX, ev.clientY);
+});
+function bindClick(id, fn) {
+  var b = $(id);
+  if (b) b.addEventListener("click", function () { AudioSys.ensure(); fn(); });
+}
+bindClick("btnPlay", function () { AudioSys.click(); startRun(); });
+bindClick("btnHowTo", function () { openHowto("menu"); });
+bindClick("btnHowToGotIt", function () { AudioSys.click(); closeHowto(); });
+bindClick("btnMenuSound", function () { toggleMute(); });
+bindClick("btnDraftStart", function () { AudioSys.click(); beginDraft(); });
+bindClick("btnDoneDraft", function () { AudioSys.click(); endDraft(); });
+bindClick("btnStartWave", function () { startWave(); });
+bindClick("btnSpeed", function () { toggleSpeed(); });
+bindClick("btnSpeed2", function () { toggleSpeed(); });
+bindClick("btnPause", function () { pauseGame(); });
+bindClick("btnResume", function () { AudioSys.click(); resumeGame(); });
+bindClick("btnQuitRun", function () { show($("pauseOverlay"), false); showMenu(); });
+bindClick("btnSound", function () { toggleMute(); });
+bindClick("btnUpgrade", function () { upgradeTower(); });
+bindClick("btnSell", function () { sellTower(); });
+bindClick("btnCloseTower", function () { G.selTower = null; showBar(G.phase === "build" ? "build" : "wave"); draw(); });
+bindClick("btnReplay", function () { AudioSys.click(); startRun(); });
+bindClick("btnRunMenu", function () { showMenu(); });
+bindClick("btnRetry", function () { AudioSys.click(); startRun(); });
+bindClick("btnOverMenu", function () { showMenu(); });
+for (var hi = 0; hi < 3; hi++) {
+  (function (i) { bindClick("hand" + i, function () { selectHand(i); }); })(hi);
+}
+TOWER_ORDER.forEach(function (id) {
+  var idx = TOWER_ORDER.indexOf(id);
+  bindClick("tower" + idx, function () { selectTowerType(id); });
+});
+document.addEventListener("keydown", function (ev) {
+  var k = ev.key;
+  if (k === "m" || k === "M") { toggleMute(); return; }
+  if (k === "Escape") {
+    if (G.state === "playing") pauseGame();
+    else if (G.state === "paused") resumeGame();
+    return;
+  }
+  if (G.state !== "playing") return;
+  if (k === " ") {
+    ev.preventDefault();
+    if (G.phase === "build") startWave();
+    else if (G.phase === "wave") toggleSpeed();
+    return;
+  }
+  if (G.phase === "draft" && (k === "1" || k === "2" || k === "3" || k === "4")) {
+    var i = parseInt(k, 10) - 1;
+    if (G.hand[i]) selectHand(i);
+    return;
+  }
+  if (G.phase === "build") {
+    var map = { q: "sling", Q: "sling", w: "boulder", W: "boulder", e: "frost", E: "frost", r: "spark", R: "spark" };
+    if (map[k]) { selectTowerType(map[k]); return; }
+  }
+  if (k === "Enter") {
+    G.usedKeyboard = true;
+    onCanvasTap.apply(null, (function () {
+      var c = cellCenter(G.cursor.x, G.cursor.y);
+      var r = canvas.getBoundingClientRect();
+      return [r.left + (c.x / 960) * r.width, r.top + (c.y / 600) * r.height];
+    })());
+    return;
+  }
+  var mv = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[k];
+  if (mv) {
+    ev.preventDefault();
+    G.usedKeyboard = true;
+    G.cursor.x = clamp(G.cursor.x + mv[0], 0, COLS - 1);
+    G.cursor.y = clamp(G.cursor.y + mv[1], 0, ROWS - 1);
+    draw();
+  }
+});
+document.addEventListener("visibilitychange", function () {
+  if (document.hidden && G.state === "playing" && G.phase === "wave") pauseGame();
+});
+
+/* ---- main loop ---- */
+function frame(ts) {
+  var dt = Math.min(0.05, (ts - lastFrame) / 1000 || 0.016);
+  lastFrame = ts;
+  if (G.state === "playing") {
+    var steps = G.phase === "wave" ? G.speed : 1;
+    for (var s = 0; s < steps; s++) stepGame(dt);
+  } else {
+    stepGame(0); // particles still settle on overlays
+  }
+  draw();
+  requestAnimationFrame(frame);
+}
+
+/* ---- boot ---- */
+(function boot() {
+  // Demo valley behind the menu overlay: a winding showcase road + towers.
+  G.board = genBoard(42);
+  G.road = [{ x: 0, y: 3 }, { x: 1, y: 3 }, { x: 2, y: 3 }, { x: 2, y: 2 }, { x: 2, y: 1 }, { x: 3, y: 1 }, { x: 4, y: 1 }, { x: 4, y: 2 }, { x: 4, y: 3 }, { x: 5, y: 3 }, { x: 6, y: 3 }, { x: 6, y: 4 }, { x: 6, y: 5 }, { x: 7, y: 5 }, { x: 8, y: 5 }];
+  G.towers = [
+    { x: 1, y: 1, type: "sling", level: 1, cd: 0 },
+    { x: 3, y: 3, type: "boulder", level: 2, cd: 0 },
+    { x: 5, y: 1, type: "frost", level: 1, cd: 0 },
+    { x: 7, y: 3, type: "spark", level: 1, cd: 0 },
+  ];
+  if (SAVE.muted) { /* label set below */ }
+  updateSoundLabels();
+  if (!SAVE.seenHowto) {
+    showMenu();
+    show($("menuOverlay"), false);
+    openHowto("menu");
+    SAVE.seenHowto = true;
+    persistSave();
+  } else {
+    showMenu();
+  }
+  window.__gameReady = true;
+  requestAnimationFrame(frame);
+})();
+
+/* ---- test hook ---- */
+window.__PebbleholdTest = {
+  G: G, SAVE: SAVE, CG: CG, AudioSys: AudioSys, Music: Music,
+  COLS: COLS, ROWS: ROWS, ENTRY: ENTRY, KEEP: KEEP, TOTAL_WAVES: TOTAL_WAVES,
+  MAX_HEARTS: MAX_HEARTS, START_GOLD: START_GOLD,
+  THEMES: THEMES, TOWERS: TOWERS, TOWER_ORDER: TOWER_ORDER, ENEMIES: ENEMIES,
+  mulberry32: mulberry32, clamp: clamp, cellKey: cellKey,
+  themeForBest: themeForBest, themeUnlocked: themeUnlocked,
+  towerUnlocked: towerUnlocked, towerSellValue: towerSellValue,
+  enemyHp: enemyHp, waveMultiplier: waveMultiplier, killGold: killGold,
+  waveClearGold: waveClearGold, waveClearCoins: waveClearCoins,
+  coinsForKills: coinsForKills, starsForRun: starsForRun,
+  defaultSave: defaultSave, loadSave: loadSave, saveSave: saveSave,
+  genBoard: genBoard, roadEnd: roadEnd, roadDir: roadDir, roadSet: roadSet,
+  routePossible: routePossible, tileTarget: tileTarget, canPlaceTile: canPlaceTile,
+  roadTouchesKeep: roadTouchesKeep, dealHand: dealHand, tileName: tileName,
+  waveComp: waveComp, waveUnlockText: waveUnlockText, dealCards: dealCards,
+  waypoints: waypoints, newWaveState: newWaveState, waveStep: waveStep,
+  simulateWave: simulateWave, enemyPos: enemyPos,
+  startRun: startRun, showMenu: showMenu, showWaveIntro: showWaveIntro,
+  beginDraft: beginDraft, endDraft: endDraft, beginBuild: beginBuild,
+  startWave: startWave, toggleSpeed: toggleSpeed, onWaveCleared: onWaveCleared,
+  applyCard: applyCard, runComplete: runComplete, runOver: runOver,
+  pauseGame: pauseGame, resumeGame: resumeGame, openHowto: openHowto,
+  closeHowto: closeHowto, toggleMute: toggleMute, selectHand: selectHand,
+  placeHandTile: placeHandTile, selectTowerType: selectTowerType,
+  tryBuildTower: tryBuildTower, selectTower: selectTower,
+  upgradeTower: upgradeTower, sellTower: sellTower,
+  stepGame: stepGame, draw: draw, drawCoin: drawCoin,
+  boardGeom: boardGeom, cellCenter: cellCenter, canvasToCell: canvasToCell,
+  updateHUD: updateHUD, renderHand: renderHand, renderTowerBar: renderTowerBar,
+};
+</script>
+</body>
+</html>
